@@ -199,7 +199,7 @@ vips_buffer_dump_all( void )
 static void
 vips_buffer_free( VipsBuffer *buffer )
 {
-	VIPS_FREEF( vips_tracked_free, buffer->buf );
+	VIPS_FREEF(vips_tracked_aligned_free, buffer->buf);
 	buffer->bsize = 0;
 	g_free( buffer );
 
@@ -469,6 +469,7 @@ buffer_move( VipsBuffer *buffer, VipsRect *area )
 {
 	VipsImage *im = buffer->im;
 	size_t new_bsize;
+	size_t align;
 
 	g_assert( buffer->ref_count == 1 );
 
@@ -479,12 +480,25 @@ buffer_move( VipsBuffer *buffer, VipsRect *area )
 
 	new_bsize = (size_t) VIPS_IMAGE_SIZEOF_PEL( im ) * 
 		area->width * area->height;
-	if( buffer->bsize < new_bsize ||
-		!buffer->buf ) {
+
+	/* Need to pad buffer size to be aligned-up to
+	 * 32 bytes for the vips_reduce{h,v} simd path.
+	 */
+#ifdef HAVE_SIMD
+	if (im->BandFmt == VIPS_FORMAT_UCHAR) {
+		new_bsize += 32 - 1;
+		align = 32;
+	}
+	else
+#endif /*HAVE_SIMD*/
+		align = 16;
+
+	if (buffer->bsize < new_bsize ||
+		!buffer->buf) {
 		buffer->bsize = new_bsize;
-		VIPS_FREEF( vips_tracked_free, buffer->buf );
-		if( !(buffer->buf = vips_tracked_malloc( buffer->bsize )) ) 
-			return( -1 );
+		VIPS_FREEF(vips_tracked_aligned_free, buffer->buf);
+		if (!(buffer->buf = vips_tracked_aligned_alloc(buffer->bsize, align)))
+			return -1;
 	}
 
 	return( 0 );
