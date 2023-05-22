@@ -180,7 +180,36 @@ reduceh_unsigned_int_tab( VipsReduceh *reduceh,
 	const T* restrict in = (T *) pin;
 	const int n = reduceh->n_point;
 
-	for( int z = 0; z < bands; z++ ) {
+	int z = 0;
+
+#if HAVE_SIMD
+	if( bands >= 4 ) {
+		// int32_t sums[4];
+		VipsSimdInt32x4 vmin = vips_simd_zero_int32x4();
+		VipsSimdInt32x4 vmax = 
+			vips_simd_new_int32x4_const1( max_value );
+
+		for( ; z <= bands-4; z += 4 ) {
+			VipsSimdInt32x4 vsum =
+				reduce_sum_simd_int32x4<T, sizeof( T ), FALSE>(
+					in + z, bands, cx, n );
+			vsum = unsigned_fixed_round_simd( vsum );
+			vsum = vips_simd_clip_int32x4( vmin, vsum, vmax );
+
+			vips_simd_store_cvt_int32x4( out + z, vsum,
+				sizeof( T ), FALSE );
+
+			// vips_simd_store_int32x4( sums, vsum );
+
+			// out[z] = sums[0];
+			// out[z + 1] = sums[1];
+			// out[z + 2] = sums[2];
+			// out[z + 3] = sums[3];
+		}
+	}
+#endif /*HAVE_SIMD*/
+
+	for( ; z < bands; z++ ) {
 		int sum;
 	       
 		sum = reduce_sum<T, int>( in + z, bands, cx, n );
@@ -201,7 +230,37 @@ reduceh_signed_int_tab( VipsReduceh *reduceh,
 	const T* restrict in = (T *) pin;
 	const int n = reduceh->n_point;
 
-	for( int z = 0; z < bands; z++ ) {
+	int z = 0;
+
+#if HAVE_SIMD
+	if( bands >= 4 ) {
+		// int32_t sums[4];
+		VipsSimdInt32x4 vmin =
+			vips_simd_new_int32x4_const1( min_value );
+		VipsSimdInt32x4 vmax = 
+			vips_simd_new_int32x4_const1( max_value );
+
+		for( ; z <= bands-4; z += 4 ) {
+			VipsSimdInt32x4 vsum =
+				reduce_sum_simd_int32x4<T, sizeof( T ), TRUE>(
+					in + z, bands, cx, n );
+			vsum = signed_fixed_round_simd( vsum );
+			vsum = vips_simd_clip_int32x4( vmin, vsum, vmax );
+
+			vips_simd_store_cvt_int32x4( out + z, vsum,
+				sizeof( T ), TRUE );
+
+			// vips_simd_store_int32x4( sums, vsum );
+
+			// out[z] = sums[0];
+			// out[z + 1] = sums[1];
+			// out[z + 2] = sums[2];
+			// out[z + 3] = sums[3];
+		}
+	}
+#endif /*HAVE_SIMD*/
+
+	for( ; z < bands; z++ ) {
 		int sum;
 
 		sum = reduce_sum<T, int>( in + z, bands, cx, n );
@@ -214,18 +273,29 @@ reduceh_signed_int_tab( VipsReduceh *reduceh,
 
 /* Floating-point version.
  */
-template <typename T>
 static void inline
 reduceh_float_tab( VipsReduceh *reduceh,
 	VipsPel *pout, const VipsPel *pin,
 	const int bands, const double *cx )
 {
-	T* restrict out = (T *) pout;
-	const T* restrict in = (T *) pin;
+	float* restrict out = (float *) pout;
+	const float* restrict in = (float *) pin;
 	const int n = reduceh->n_point;
 
-	for( int z = 0; z < bands; z++ )
-		out[z] = reduce_sum<T, double>( in + z, bands, cx, n );
+	int z = 0;
+
+#if HAVE_SIMD
+	if( bands >= 4 ) {
+		for( ; z <= bands-4; z += 4 ) {
+			VipsSimdFloat32x4 vsum = reduce_sum_simd_float32x4( 
+				in + z, bands, cx, n );
+			vips_simd_store_float32x4( out + z, vsum );
+		}
+	}
+#endif /*HAVE_SIMD*/
+
+	for( ; z < bands; z++ )
+		out[z] = reduce_sum<float, double>( in + z, bands, cx, n );
 }
 
 /* 32-bit int output needs a double intermediate.
@@ -241,7 +311,28 @@ reduceh_unsigned_int32_tab( VipsReduceh *reduceh,
 	const T* restrict in = (T *) pin;
 	const int n = reduceh->n_point;
 
-	for( int z = 0; z < bands; z++ ) {
+	int z = 0;
+
+#if HAVE_SIMD
+	if( bands >= 2 ) {
+		float64_t sums[2];
+		VipsSimdFloat64x2 vmin = vips_simd_zero_float64x2();
+		VipsSimdFloat64x2 vmax =
+			vips_simd_new_float64x2_const1( max_value );
+
+		for( ; z <= bands-2; z += 2 ) {
+			VipsSimdFloat64x2 vsum = reduce_sum_simd_float64x2<T>(
+				in + z, bands, cx, n );
+			vsum = vips_simd_clip_float64x2( vmin, vsum, vmax );
+			vips_simd_store_float64x2( sums, vsum );
+
+			out[z + 0] = vsum[0];
+			out[z + 1] = vsum[1];
+		}
+	}
+#endif /*HAVE_SIMD*/
+
+	for( ; z < bands; z++ ) {
 		double sum;
 
 		sum = reduce_sum<T, double>( in + z, bands, cx, n );
@@ -259,7 +350,29 @@ reduceh_signed_int32_tab( VipsReduceh *reduceh,
 	const T* restrict in = (T *) pin;
 	const int n = reduceh->n_point;
 
-	for( int z = 0; z < bands; z++ ) {
+	int z = 0;
+
+#if HAVE_SIMD
+	if( bands >= 2 ) {
+		float64_t sums[2];
+		VipsSimdFloat64x2 vmin =
+			vips_simd_new_float64x2_const1( min_value );
+		VipsSimdFloat64x2 vmax =
+			vips_simd_new_float64x2_const1( max_value );
+
+		for( ; z <= bands-2; z += 2 ) {
+			VipsSimdFloat64x2 vsum = reduce_sum_simd_float64x2<T>(
+				in + z, bands, cx, n );
+			vsum = vips_simd_clip_float64x2( vmin, vsum, vmax );
+			vips_simd_store_float64x2( sums, vsum );
+
+			out[z + 0] = vsum[0];
+			out[z + 1] = vsum[1];
+		}
+	}
+#endif /*HAVE_SIMD*/
+
+	for( ; z < bands; z++ ) {
 		double sum;
 
 		sum = reduce_sum<T, double>( in + z, bands, cx, n );
@@ -270,25 +383,45 @@ reduceh_signed_int32_tab( VipsReduceh *reduceh,
 
 /* Ultra-high-quality version for double images.
  */
-template <typename T>
 static void inline
-reduceh_notab( VipsReduceh *reduceh,
+reduceh_double_notab( VipsReduceh *reduceh,
 	VipsPel *pout, const VipsPel *pin,
 	const int bands, double x )
 {
-	T* restrict out = (T *) pout;
-	const T* restrict in = (T *) pin;
+	double* restrict out = (double *) pout;
+	const double* restrict in = (double *) pin;
 	const int n = reduceh->n_point;
 
 	double cx[MAX_POINT];
 
 	vips_reduce_make_mask( cx, reduceh->kernel, reduceh->hshrink, x ); 
 
-	for( int z = 0; z < bands; z++ ) {
+	int z = 0;
+
+#if HAVE_SIMD
+	if( bands >= 2 ) {
+		float64_t sums[2];
+
+		for( ; z <= bands-2; z += 2 ) {
+			VipsSimdFloat64x2 vsum = 
+				reduce_sum_simd_float64x2<double>(
+					in + z, bands, cx, n );
+			// vips_simd_store_float64x2( out + z, vsum );
+
+			vips_simd_store_float64x2( sums, vsum );
+
+			out[z + 0] = VIPS_ROUND_UINT( vsum[0] );
+			out[z + 1] = VIPS_ROUND_UINT( vsum[1] );
+		}
+	}
+#endif /*HAVE_SIMD*/
+
+	for( ; z < bands; z++ ) {
 		double sum;
-		sum = reduce_sum<T, double>( in + z, bands, cx, n );
+		sum = reduce_sum<double, double>( in + z, bands, cx, n );
 
 		out[z] = VIPS_ROUND_UINT( sum );
+		// out[z] = reduce_sum<double, double>( in + z, bands, cx, n );
 	}
 }
 
@@ -404,13 +537,13 @@ vips_reduceh_gen( VipsRegion *out_region, void *seq,
 
 			case VIPS_FORMAT_FLOAT:
 			case VIPS_FORMAT_COMPLEX:
-				reduceh_float_tab<float>( reduceh,
+				reduceh_float_tab( reduceh,
 					q, p, bands, cxf );
 				break;
 
 			case VIPS_FORMAT_DOUBLE:
 			case VIPS_FORMAT_DPCOMPLEX:
-				reduceh_notab<double>( reduceh,
+				reduceh_double_notab( reduceh,
 					q, p, bands, X - ix );
 				break;
 

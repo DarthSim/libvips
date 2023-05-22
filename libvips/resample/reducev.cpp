@@ -166,6 +166,8 @@ vips_reducev_finalize( GObject *gobject )
 	G_OBJECT_CLASS( vips_reducev_parent_class )->finalize( gobject );
 }
 
+#if !HAVE_SIMD
+
 #define TEMP( N, S ) vips_vector_temporary( v, (char *) N, S )
 #define PARAM( N, S ) vips_vector_parameter( v, (char *) N, S )
 #define SCANLINE( N, P, S ) vips_vector_source_scanline( v, (char *) N, P, S )
@@ -320,6 +322,8 @@ vips_reducev_compile( VipsReducev *reducev )
 	return( 0 );
 }
 
+#endif /*!HAVE_SIMD*/
+
 /* Our sequence value.
  */
 typedef struct {
@@ -393,7 +397,33 @@ reducev_unsigned_int_tab( VipsReducev *reducev,
 	const int n = reducev->n_point;
 	const int l1 = lskip / sizeof( T );
 
-	for( int z = 0; z < ne; z++ ) {
+	int z = 0;
+
+#if HAVE_SIMD
+	// int32_t sums[4];
+	const VipsSimdInt32x4 vmin = vips_simd_zero_int32x4();
+	const VipsSimdInt32x4 vmax = vips_simd_new_int32x4_const1( max_value );
+
+	for( ; z <= ne-4; z += 4 ) {
+		VipsSimdInt32x4 vsum =
+			reduce_sum_simd_int32x4<T, sizeof( T ), FALSE>(
+				in + z, l1, cy, n );
+		vsum = unsigned_fixed_round_simd( vsum );
+		vsum = vips_simd_clip_int32x4( vmin, vsum, vmax );
+		
+		vips_simd_store_cvt_int32x4( out + z, vsum,
+			sizeof( T ), FALSE );
+
+		// vips_simd_store_int32x4( sums, vsum );
+
+		// out[z] = sums[0];
+		// out[z + 1] = sums[1];
+		// out[z + 2] = sums[2];
+		// out[z + 3] = sums[3];
+	}
+#endif /*HAVE_SIMD*/
+
+	for( ; z < ne; z++ ) {
 		int sum;
 
 		sum = reduce_sum<T, int>( in + z, l1, cy, n );
@@ -415,7 +445,32 @@ reducev_signed_int_tab( VipsReducev *reducev,
 	const int n = reducev->n_point;
 	const int l1 = lskip / sizeof( T );
 
-	for( int z = 0; z < ne; z++ ) {
+	int z = 0;
+
+#if HAVE_SIMD
+	// int32_t sums[4];
+	const VipsSimdInt32x4 vmin = vips_simd_new_int32x4_const1( min_value );
+	const VipsSimdInt32x4 vmax = vips_simd_new_int32x4_const1( max_value );
+
+	for( ; z <= ne-4; z += 4 ) {
+		VipsSimdInt32x4 vsum =
+			reduce_sum_simd_int32x4<T, sizeof( T ), TRUE>(
+				in + z, l1, cy, n );
+		vsum = signed_fixed_round_simd( vsum );
+		vsum = vips_simd_clip_int32x4( vmin, vsum, vmax );
+
+		vips_simd_store_cvt_int32x4( out + z, vsum, sizeof( T ), TRUE );
+
+		// vips_simd_store_int32x4( sums, vsum );
+
+		// out[z] = sums[0];
+		// out[z + 1] = sums[1];
+		// out[z + 2] = sums[2];
+		// out[z + 3] = sums[3];
+	}
+#endif /*HAVE_SIMD*/
+
+	for( ; z < ne; z++ ) {
 		int sum;
 
 		sum = reduce_sum<T, int>( in + z, l1, cy, n );
@@ -428,19 +483,28 @@ reducev_signed_int_tab( VipsReducev *reducev,
 
 /* Floating-point version.
  */
-template <typename T>
 static void inline
 reducev_float_tab( VipsReducev *reducev,
 	VipsPel *pout, const VipsPel *pin,
 	const int ne, const int lskip, const double * restrict cy )
 {
-	T* restrict out = (T *) pout;
-	const T* restrict in = (T *) pin;
+	float* restrict out = (float *) pout;
+	const float* restrict in = (float *) pin;
 	const int n = reducev->n_point;
-	const int l1 = lskip / sizeof( T );
+	const int l1 = lskip / sizeof( float );
 
-	for( int z = 0; z < ne; z++ ) 
-		out[z] = reduce_sum<T, double>( in + z, l1, cy, n );
+	int z = 0;
+
+#if HAVE_SIMD
+	for( ; z <= ne-4; z += 4 ) {
+		VipsSimdFloat32x4 vsum = reduce_sum_simd_float32x4(
+			in + z, l1, cy, n );
+		vips_simd_store_float32x4( out + z, vsum );
+	}
+#endif /*HAVE_SIMD*/
+
+	for( ; z < ne; z++ )
+		out[z] = reduce_sum<float, double>( in + z, l1, cy, n );
 }
 
 /* 32-bit int output needs a double intermediate.
@@ -457,7 +521,26 @@ reducev_unsigned_int32_tab( VipsReducev *reducev,
 	const int n = reducev->n_point;
 	const int l1 = lskip / sizeof( T );
 
-	for( int z = 0; z < ne; z++ ) {
+	int z = 0;
+
+#if HAVE_SIMD
+	float64_t sums[2];
+	const VipsSimdFloat64x2 vmin = vips_simd_zero_float64x2();
+	const VipsSimdFloat64x2 vmax =
+		vips_simd_new_float64x2_const1( max_value );
+
+	for( ; z <= ne-2; z += 2 ) {
+		VipsSimdFloat64x2 vsum = reduce_sum_simd_float64x2<T>(
+			in + z, l1, cy, n );
+		vsum = vips_simd_clip_float64x2( vmin, vsum, vmax );
+		vips_simd_store_float64x2( sums, vsum );
+
+		out[z + 0] = vsum[0];
+		out[z + 1] = vsum[1];
+	}
+#endif /*HAVE_SIMD*/
+
+	for( ; z < ne; z++ ) {
 		double sum;
 
 		sum = reduce_sum<T, double>( in + z, l1, cy, n );
@@ -476,7 +559,27 @@ reducev_signed_int32_tab( VipsReducev *reducev,
 	const int n = reducev->n_point;
 	const int l1 = lskip / sizeof( T );
 
-	for( int z = 0; z < ne; z++ ) {
+	int z = 0;
+
+#if HAVE_SIMD
+	float64_t sums[2];
+	const VipsSimdFloat64x2 vmin =
+		vips_simd_new_float64x2_const1( min_value );
+	const VipsSimdFloat64x2 vmax =
+		vips_simd_new_float64x2_const1( max_value );
+
+	for( ; z <= ne-2; z += 2 ) {
+		VipsSimdFloat64x2 vsum = reduce_sum_simd_float64x2<T>(
+			in + z, l1, cy, n );
+		vsum = vips_simd_clip_float64x2( vmin, vsum, vmax );
+		vips_simd_store_float64x2( sums, vsum );
+
+		out[z + 0] = vsum[0];
+		out[z + 1] = vsum[1];
+	}
+#endif /*HAVE_SIMD*/
+
+	for( ; z < ne; z++ ) {
 		double sum;
 
 		sum = reduce_sum<T, double>( in + z, l1, cy, n );
@@ -486,26 +589,43 @@ reducev_signed_int32_tab( VipsReducev *reducev,
 
 /* Ultra-high-quality version for double images.
  */
-template <typename T>
 static void inline
-reducev_notab( VipsReducev *reducev,
+reducev_double_notab( VipsReducev *reducev,
 	VipsPel *pout, const VipsPel *pin,
 	const int ne, const int lskip, double y )
 {
-	T* restrict out = (T *) pout;
-	const T* restrict in = (T *) pin;
+	double* restrict out = (double *) pout;
+	const double* restrict in = (double *) pin;
 	const int n = reducev->n_point;
-	const int l1 = lskip / sizeof( T );
+	const int l1 = lskip / sizeof( double );
 
 	double cy[MAX_POINT];
 
 	vips_reduce_make_mask( cy, reducev->kernel, reducev->vshrink, y ); 
 
-	for( int z = 0; z < ne; z++ ) {
+	int z = 0;
+
+#if HAVE_SIMD
+	float64_t sums[2];
+
+	for( ; z <= ne-2; z += 2 ) {
+		VipsSimdFloat64x2 vsum = reduce_sum_simd_float64x2<double>(
+			in + z, l1, cy, n );
+		// vips_simd_store_float64x2( out + z, vsum );
+
+		vips_simd_store_float64x2( sums, vsum );
+
+		out[z + 0] = VIPS_ROUND_UINT( vsum[0] );
+		out[z + 1] = VIPS_ROUND_UINT( vsum[1] );
+	}
+#endif /*HAVE_SIMD*/
+
+	for( ; z < ne; z++ ) {
 		double sum;
-		sum = reduce_sum<T, double>( in + z, l1, cy, n );
+		sum = reduce_sum<double, double>( in + z, l1, cy, n );
 
 		out[z] = VIPS_ROUND_UINT( sum );
+		// out[z] = reduce_sum<double, double>( in + z, l1, cy, n );
 	}
 }
 
@@ -601,13 +721,13 @@ vips_reducev_gen( VipsRegion *out_region, void *vseq,
 
 		case VIPS_FORMAT_FLOAT:
 		case VIPS_FORMAT_COMPLEX:
-			reducev_float_tab<float>( reducev,
+			reducev_float_tab( reducev,
 				q, p, ne, lskip, cyf );
 			break;
 
 		case VIPS_FORMAT_DPCOMPLEX:
 		case VIPS_FORMAT_DOUBLE:
-			reducev_notab<double>( reducev,
+			reducev_double_notab( reducev,
 				q, p, ne, lskip, Y - py );
 			break;
 
@@ -626,6 +746,7 @@ vips_reducev_gen( VipsRegion *out_region, void *vseq,
 	return( 0 );
 }
 
+#if !HAVE_SIMD
 /* Process uchar images with a vector path.
  */
 static int
@@ -723,18 +844,21 @@ vips_reducev_vector_gen( VipsRegion *out_region, void *vseq,
 	return( 0 );
 }
 
+#endif /*!HAVE_SIMD*/
+
 static int
 vips_reducev_raw( VipsReducev *reducev, VipsImage *in, int height, 
 		VipsImage **out ) 
 {
 	VipsObjectClass *object_class = VIPS_OBJECT_GET_CLASS( reducev );
 
-	VipsGenerateFn generate;
+	VipsGenerateFn generate = vips_reducev_gen;
 
+#if !HAVE_SIMD
 	/* We need an 2.6 version if we will use the vector path.
 	 */
 	if( in->BandFmt == VIPS_FORMAT_UCHAR &&
-		vips_vector_isenabled() ) 
+		vips_vector_isenabled() ) {
 		for( int y = 0; y < VIPS_TRANSFORM_SCALE + 1; y++ ) {
 			reducev->matrixo[y] = 
 				VIPS_ARRAY( NULL, reducev->n_point, int ); 
@@ -746,15 +870,14 @@ vips_reducev_raw( VipsReducev *reducev, VipsImage *in, int height,
 				reducev->n_point, 64 );
 		}
 
-	/* Try to build a vector version, if we can.
-	 */
-	generate = vips_reducev_gen;
-	if( in->BandFmt == VIPS_FORMAT_UCHAR &&
-		vips_vector_isenabled() &&
-		!vips_reducev_compile( reducev ) ) {
-		g_info( "reducev: using vector path" ); 
-		generate = vips_reducev_vector_gen;
+		/* Try to build a vector version
+		*/
+		if( !vips_reducev_compile( reducev ) ) {
+			g_info( "reducev: using vector path" ); 
+			generate = vips_reducev_vector_gen;
+		}
 	}
+#endif /*!HAVE_SIMD*/
 
 	*out = vips_image_new();
 	if( vips_image_pipelinev( *out, 
@@ -790,7 +913,7 @@ vips_reducev_raw( VipsReducev *reducev, VipsImage *in, int height,
 
 static int
 vips_reducev_build( VipsObject *object )
-{
+{	
 	VipsObjectClass *object_class = VIPS_OBJECT_GET_CLASS( object );
 	VipsResample *resample = VIPS_RESAMPLE( object );
 	VipsReducev *reducev = (VipsReducev *) object;

@@ -127,6 +127,8 @@
 
 #include "pconvolution.h"
 
+#include "../simd/simd.h"
+
 /* Larger than this and we fall back to C.
  */
 #define MAX_PASS (20)
@@ -283,6 +285,8 @@ vips_convi_start( VipsImage *out, void *a, void *b )
 
 	return( (void *) seq );
 }
+
+#if !HAVE_SIMD
 
 #define TEMP( N, S ) vips_vector_temporary( v, (char *) N, S )
 #define PARAM( N, S ) vips_vector_parameter( v, (char *) N, S )
@@ -571,17 +575,125 @@ vips_convi_gen_vector( VipsRegion *or,
 	return( 0 );
 }
 
+#define CONV_INT_SIMD( CLIP ) {}
+#define CONV_FLOAT_SIMD_float() {}
+#define CONV_FLOAT_SIMD_double() {}
+
+#else /*!HAVE_SIMD*/
+
+/* CONV_INT_SIMD loops over x using SIMD intrinsics
+ */
+#define CONV_INT_SIMD( CLIP ) { \
+	int32_t tmp[4]; \
+	VipsSimdInt32x4 vrounding = vips_simd_new_int32x4_const1( rounding ); \
+	\
+	for( ; x <= sz - 4; x+=4 ) {  \
+		int i; \
+		VipsSimdInt32x4 vsum = vips_simd_zero_int32x4(); \
+		\
+		for ( i = 0; i < nnz; i++ ) { \
+			const int curr_offset = offsets[i]; \
+			const VipsSimdInt32x4 vp = vips_simd_new_int32x4( \
+				p[curr_offset], \
+				p[curr_offset + 1], \
+				p[curr_offset + 2], \
+				p[curr_offset + 3] ); \
+			vsum = vips_simd_muladd_int32x4_const1( \
+				vsum, vp, t[i] ); \
+		} \
+		\
+		vsum = vips_simd_add_int32x4( vsum, vrounding ); \
+		\
+		vips_simd_store_int32x4( &tmp[0], vsum ); \
+		\
+		sum = tmp[0] / scale + offset;  \
+		CLIP; \
+		q[x + 0] = sum;  \
+		\
+		sum = tmp[1] / scale + offset;  \
+		CLIP; \
+		q[x + 1] = sum;  \
+		\
+		sum = tmp[2] / scale + offset;  \
+		CLIP; \
+		q[x + 2] = sum;  \
+		\
+		sum = tmp[3] / scale + offset;  \
+		CLIP; \
+		q[x + 3] = sum;  \
+		\
+		p += 4; \
+	}  \
+}
+
+/* CONV_FLOAT_SIMD loops over x using SIMD intrinsics
+ */
+#define CONV_FLOAT_SIMD_float() { \
+	const VipsSimdFloat32x4 voffset = \
+		vips_simd_new_float32x4_const1( offset ); \
+	\
+	const VipsSimdFloat32x4 vscale = \
+		vips_simd_new_float32x4_const1( 1.0 / (float32_t) scale ); \
+	\
+	for( ; x <= sz - 4; x += 4 ) { \
+		VipsSimdFloat32x4 vsum = vips_simd_zero_float32x4(); \
+		\
+		for ( i = 0; i < nnz; i++ ) { \
+			const VipsSimdFloat32x4 vp = \
+				vips_simd_load_float32x4( p + offsets[i] ); \
+			vsum = vips_simd_muladd_float32x4_const1( \
+				vsum, vp, t[i] ); \
+		} \
+		\
+		vsum = vips_simd_muladd_float32x4( voffset, vsum, vscale ); \
+		\
+		vips_simd_store_float32x4( q + x, vsum ); \
+		\
+		p += 4; \
+	}  \
+}
+
+// CONV_FLOAT_SIMD loops over x using SIMD intrinsics
+#define CONV_FLOAT_SIMD_double() { \
+	const VipsSimdFloat64x2 voffset = \
+		vips_simd_new_float64x2_const1( offset ); \
+	\
+	const VipsSimdFloat64x2 vscale = \
+		vips_simd_new_float64x2_const1( 1.0 / (float64_t) scale ); \
+	\
+	for( ; x <= sz - 2; x += 2 ) { \
+		VipsSimdFloat64x2 vsum = vips_simd_zero_float64x2(); \
+		\
+		for ( i = 0; i < nnz; i++ ) { \
+			const VipsSimdFloat64x2 vp = \
+				vips_simd_load_float64x2( p + offsets[i] ); \
+			vsum = vips_simd_muladd_float64x2_const1( \
+				vsum, vp, t[i] ); \
+		} \
+		\
+		vsum = vips_simd_muladd_float64x2( voffset, vsum, vscale ); \
+		\
+		vips_simd_store_float64x2( q + x, vsum ); \
+		\
+		p += 2; \
+	}  \
+}
+
+#endif /*!HAVE_SIMD*/
+
 /* INT inner loops.
  */
 #define CONV_INT( TYPE, CLIP ) { \
 	TYPE * restrict p = (TYPE *) VIPS_REGION_ADDR( ir, le, y ); \
 	TYPE * restrict q = (TYPE *) VIPS_REGION_ADDR( or, le, y ); \
 	int * restrict offsets = seq->offsets; \
+	int i, sum; \
 	\
-	for( x = 0; x < sz; x++ ) {  \
-		int sum; \
-		int i; \
-		\
+	x = 0; \
+	\
+	CONV_INT_SIMD( CLIP ); \
+	\
+	for( ; x < sz; x++ ) {  \
 		sum = 0; \
 		for ( i = 0; i < nnz; i++ ) \
 			sum += t[i] * p[offsets[i]]; \
@@ -593,7 +705,7 @@ vips_convi_gen_vector( VipsRegion *or,
 		q[x] = sum;  \
 		p += 1; \
 	}  \
-} 
+}
 
 /* FLOAT inner loops.
  */
@@ -601,11 +713,14 @@ vips_convi_gen_vector( VipsRegion *or,
 	TYPE * restrict p = (TYPE *) VIPS_REGION_ADDR( ir, le, y ); \
 	TYPE * restrict q = (TYPE *) VIPS_REGION_ADDR( or, le, y ); \
 	int * restrict offsets = seq->offsets; \
+	double sum; \
+	int i; \
 	\
-	for( x = 0; x < sz; x++ ) {  \
-		double sum; \
-		int i; \
-		\
+	x = 0; \
+	\
+	CONV_FLOAT_SIMD_##TYPE(); \
+	\
+	for( ; x < sz; x++ ) {  \
 		sum = 0; \
 		for ( i = 0; i < nnz; i++ ) \
 			sum += t[i] * p[offsets[i]]; \
@@ -828,6 +943,7 @@ vips__image_intize( VipsImage *in, VipsImage **out )
 	return( 0 );
 }
 
+#if !HAVE_SIMD
 /* Make an int version of a mask. Each element is 8.8 float, with the same
  * exponent for each element (so just 8 bits in @out).
  *
@@ -969,6 +1085,7 @@ vips_convi_intize( VipsConvi *convi, VipsImage *M )
 
 	return( 0 );
 }
+#endif /*!HAVE_SIMD*/
 
 static int
 vips_convi_build( VipsObject *object )
@@ -1002,6 +1119,7 @@ vips_convi_build( VipsObject *object )
 	 */
 	generate = vips_convi_gen;
 
+#if !HAVE_SIMD
 	/* For uchar input, try to make a vector path.
 	 */
 	if( vips_vector_isenabled() &&
@@ -1014,6 +1132,7 @@ vips_convi_build( VipsObject *object )
 		else
 			vips_convi_compile_free( convi );
 	}
+#endif /*!HAVE_SIMD*/
 
 	/* Make the data for the C path.
 	 */

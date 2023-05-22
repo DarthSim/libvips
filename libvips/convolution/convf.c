@@ -93,6 +93,8 @@
 
 #include "pconvolution.h"
 
+#include "../simd/simd.h"
+
 typedef struct {
 	VipsConvolution parent_instance;
 
@@ -155,14 +157,68 @@ vips_convf_start( VipsImage *out, void *a, void *b )
 	return( (void *) seq );
 }
 
+#if HAVE_SIMD
+
+#define CONV_FLOAT_SIMD_float() { \
+	for( ; x <= sz-4; x += 4 ) {  \
+		VipsSimdFloat32x4 vsum = vips_simd_new_float32x4_const1( offset ); \
+		\
+		for ( i = 0; i < nnz; i++ ) {\
+			const int curr_offset = offsets[i]; \
+			const VipsSimdFloat32x4 vp = vips_simd_new_float32x4( \
+				p[curr_offset], \
+				p[curr_offset + 1], \
+				p[curr_offset + 2], \
+				p[curr_offset + 3] ); \
+			vsum = vips_simd_muladd_float32x4_const1( \
+				vsum, vp, t[i] ); \
+		} \
+ 		\
+		vips_simd_store_float32x4( q + x, vsum ); \
+		\
+		p += 4; \
+	} \
+}
+
+#define CONV_FLOAT_SIMD_double() { \
+	for( ; x <= sz-2; x += 2 ) {  \
+		VipsSimdFloat64x2 vsum = vips_simd_new_float64x2_const1( offset ); \
+		\
+		for ( i = 0; i < nnz; i++ ) {\
+			const int curr_offset = offsets[i]; \
+			const VipsSimdFloat64x2 vp = { \
+				p[curr_offset], \
+				p[curr_offset + 1] \
+			}; \
+			vsum = vips_simd_muladd_float64x2_const1( \
+				vsum, vp, t[i] ); \
+		} \
+ 		\
+		vips_simd_store_float64x2( q + x, vsum ); \
+		\
+		p += 2; \
+	} \
+}
+
+#else /*HAVE_SIMD*/
+
+#define CONV_FLOAT_SIMD_float() {}
+#define CONV_FLOAT_SIMD_double() {}
+
+#endif /*HAVE_SIMD*/
+
 #define CONV_FLOAT( ITYPE, OTYPE ) { \
 	ITYPE * restrict p = (ITYPE *) VIPS_REGION_ADDR( ir, le, y ); \
 	OTYPE * restrict q = (OTYPE *) VIPS_REGION_ADDR( or, le, y ); \
 	int * restrict offsets = seq->offsets; \
+	int i; \
 	\
-	for( x = 0; x < sz; x++ ) {  \
+	int x = 0; \
+	\
+	CONV_FLOAT_SIMD_##OTYPE(); \
+	\
+	for( ; x < sz; x++ ) {  \
 		double sum; \
-		int i; \
 		\
 		sum = offset; \
 		for ( i = 0; i < nnz; i++ ) \

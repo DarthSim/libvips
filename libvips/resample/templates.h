@@ -28,6 +28,8 @@
 
  */
 
+#include "../simd/simd.h"
+
 /*
  * Various casts which assume that the data is already in range. (That
  * is, they are to be used with monotone samplers.)
@@ -154,6 +156,18 @@ unsigned_fixed_round( int v )
 	return( (v + round_by) >> VIPS_INTERPOLATE_SHIFT );
 }
 
+#if HAVE_SIMD
+static VipsSimdInt32x4 inline
+unsigned_fixed_round_simd( const VipsSimdInt32x4 v )
+{
+	static const VipsSimdInt32x4 round_by =
+		vips_simd_new_int32x4_const1(VIPS_INTERPOLATE_SCALE >> 1);
+
+	return( vips_simd_shr_int32x4( vips_simd_add_int32x4( v, round_by ),
+		VIPS_INTERPOLATE_SHIFT ) );
+}
+#endif /*HAVE_SIMD*/
+
 /* Fixed-point integer bicubic, used for 8-bit types.
  */
 template <typename T> static int inline
@@ -205,6 +219,32 @@ signed_fixed_round( int v )
 
 	return( (v + round_by) >> VIPS_INTERPOLATE_SHIFT );
 }
+
+#if HAVE_SIMD
+static VipsSimdInt32x4 inline
+signed_fixed_round_simd( const VipsSimdInt32x4 v )
+{
+	// // CLIP(0, v, 1) is basically (v > 0)
+	// VipsSimdInt32x4 sign_of_v = vips_simd_clip_int32x4(
+	// 	vips_simd_new_int32x4_const1(0), v,
+	// 	vips_simd_new_int32x4_const1(1)
+	// );
+	// sign_of_v = vips_simd_add_int32x4(
+	// 	vips_simd_shl_int32x4(sign_of_v, 1),
+	// 	vips_simd_new_int32x4_const1(-1)
+	// );
+
+	const VipsSimdInt32x4 sign_of_v = vips_simd_clip_int32x4(
+		vips_simd_new_int32x4_const1(-1), v,
+		vips_simd_new_int32x4_const1(1)
+	);
+
+	const VipsSimdInt32x4 vv = vips_simd_muladd_int32x4_const1(
+		v, sign_of_v, VIPS_INTERPOLATE_SCALE >> 1 );
+
+	return( vips_simd_shr_int32x4( vv, VIPS_INTERPOLATE_SHIFT ) );
+}
+#endif /*HAVE_SIMD*/
 
 /* Fixed-point integer bicubic, used for 8-bit types.
  */
@@ -456,3 +496,58 @@ reduce_sum( const T * restrict in, int stride, const IT * restrict c, int n )
 
 	return( sum ); 
 }
+
+#if HAVE_SIMD
+template <typename T, int typesize, int typesigned>
+static VipsSimdInt32x4 inline
+reduce_sum_simd_int32x4(
+	const T * restrict in, int stride, const int * restrict c, int n)
+{
+	VipsSimdInt32x4 vsum = vips_simd_zero_int32x4();
+
+	for( int i = 0; i < n; i++ ) {
+		VipsSimdInt32x4 vdata =
+			vips_simd_load_cvt_int32x4( in, typesize, typesigned );
+
+		vsum = vips_simd_muladd_int32x4_const1( vsum, vdata, c[i] );
+
+		in += stride;
+	}
+
+	return vsum;
+}
+
+static VipsSimdFloat32x4 inline
+reduce_sum_simd_float32x4(
+	const float * restrict in, int stride, const double * restrict c, int n)
+{
+	VipsSimdFloat32x4 vsum = vips_simd_zero_float32x4();
+
+	for( int i = 0; i < n; i++ ) {
+		const VipsSimdFloat32x4 vdata = vips_simd_load_float32x4( in );
+		vsum = vips_simd_muladd_float32x4_const1( vsum, vdata, c[i] );
+
+		in += stride;
+	}
+
+	return vsum;
+}
+
+template <typename T>
+static VipsSimdFloat64x2 inline
+reduce_sum_simd_float64x2(
+	const T * restrict in, int stride, const double * restrict c, int n )
+{
+	VipsSimdFloat64x2 vsum = vips_simd_zero_float64x2();
+
+	for( int i = 0; i < n; i++ ) {
+		const VipsSimdFloat64x2 vdata =
+			vips_simd_new_float64x2( in[0], in[1] );
+		vsum = vips_simd_muladd_float64x2_const1( vsum, vdata, c[i] );
+
+		in += stride;
+	}
+
+	return vsum;
+}
+#endif /*HAVE_SIMD*/
