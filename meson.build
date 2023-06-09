@@ -157,6 +157,74 @@ if cc.has_function('pthread_setattr_default_np', args: '-D_GNU_SOURCE', prefix: 
     cfg_var.set('HAVE_PTHREAD_DEFAULT_NP', '1')
 endif
 
+have_simd = false
+simd_type = 'none'
+
+if get_option('simd')
+    sse_check = '''
+        #include <smmintrin.h>
+
+        int main() {
+            __m128i i32 = _mm_set_epi32( 4, 3, 2, 1 );
+            i32 = _mm_mullo_epi32( i32, i32 );
+            i32 = _mm_cmpeq_epi32( i32, i32 );
+
+            __m128 f32 = _mm_set_ps( 4, 3, 2, 1 );
+            f32 = _mm_mul_ps( f32, f32 );
+            f32 = _mm_cmpeq_ps( f32, f32 );
+
+            __m128d f64 = _mm_set_pd( 2, 1 );
+            f64 = _mm_mul_pd( f64, f64 );
+            f64 = _mm_cmpeq_pd( f64, f64 );
+
+            return _mm_extract_epi32(i32, 0) +
+                _mm_cvtss_f32(f32) +
+                _mm_cvtsd_f64(f64);
+        }
+    '''
+    if cc.links(sse_check, args: ['-Werror', '-msse4.1'], name: 'SSE intrinsics check')
+        have_simd = true
+        simd_type = 'SSE4.1'
+        cfg_var.set('HAVE_SSE', '1')
+        add_global_arguments('-msse4.1', language : ['c', 'cpp'])
+    endif
+endif
+
+if not have_simd and get_option('simd')
+    arm_neon_check = '''
+        #include <arm_neon.h>
+
+        int main() {
+            int32x4_t i32 = { 1, 2, 3, 4 };
+            i32 = vmlaq_s32( i32, i32, i32 );
+
+            float32x4_t f32 = { 1, 2, 3, 4 };
+            f32 = vmlaq_f32( f32, f32, f32 );
+
+            float64x2_t f64 = { 1, 2 };
+            f64 = vmlaq_f64( f64, f64, f64 );
+
+            int32_t in;
+            int16_t out;
+            out = vqmovns_s32( in );
+
+            return vgetq_lane_s32( i32, 0 ) +
+                vgetq_lane_f32( f32, 0 ) +
+                vgetq_lane_f64( f64, 0 ) +
+                out;
+        }
+    '''
+    if cc.links(arm_neon_check, args: '-Werror', name: 'ARM NEON intrinsics check')
+        have_simd = true
+        simd_type = 'NEON'
+        cfg_var.set('HAVE_NEON', '1')
+    endif
+endif
+
+if have_simd
+    cfg_var.set('HAVE_SIMD', '1')
+endif
+
 # needed by rsvg and others
 zlib_dep = dependency('zlib', version: '>=0.4', required: get_option('zlib'))
 if zlib_dep.found()
@@ -653,6 +721,7 @@ build_summary = {
      'enable introspection': [enable_introspection],
      'enable examples': [get_option('examples')],
      'enable cplusplus': [get_option('cplusplus')],
+     'enable SIMD intrinsics': [have_simd, ' (', simd_type, ')'],
      'enable RAD load/save': [get_option('radiance')],
      'enable Analyze7 load/save': [get_option('analyze')],
      'enable PPM load/save': [get_option('ppm')],
