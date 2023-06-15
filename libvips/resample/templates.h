@@ -319,7 +319,7 @@ calculate_coefficients_catmull( double c[4], const double x )
  */
 static void inline
 calculate_coefficients_triangle( double *c, 
-	const double shrink, const double x )
+	const double shrink, const double x, int start, int n )
 {
 	/* Needs to be in sync with vips_reduce_get_points().
 	 */
@@ -330,8 +330,8 @@ calculate_coefficients_triangle( double *c,
 	double sum; 
 
 	sum = 0;
-	for( i = 0; i < n_points; i++ ) {
-		const double xp = (i - half) / shrink;
+	for( i = 0; i < n; i++ ) {
+		const double xp = (i + start - half) / shrink;
 
 		double l;
 
@@ -342,7 +342,10 @@ calculate_coefficients_triangle( double *c,
 		sum += l;
 	}
 
-	for( i = 0; i < n_points; i++ ) 
+	for( ; i < n_points; i++ )
+		c[i] = 0.0;
+
+	for( i = 0; i < n; i++ ) 
 		c[i] /= sum;
 }
 
@@ -357,7 +360,8 @@ calculate_coefficients_triangle( double *c,
  */
 static void inline
 calculate_coefficients_cubic( double *c, 
-	const double shrink, const double x, double B, double C )
+	const double shrink, const double x, double B, double C,
+	int start, int n )
 {
 	/* Needs to be in sync with vips_reduce_get_points().
 	 */
@@ -368,8 +372,8 @@ calculate_coefficients_cubic( double *c,
 	double sum; 
 
 	sum = 0;
-	for( i = 0; i < n_points; i++ ) {
-		const double xp = (i - half) / shrink;
+	for( i = 0; i < n; i++ ) {
+		const double xp = (i + start - half) / shrink;
 		const double axp = VIPS_FABS( xp ); 
 		const double axp2 = axp * axp;
 		const double axp3 = axp2 * axp;
@@ -392,7 +396,10 @@ calculate_coefficients_cubic( double *c,
 		sum += l;
 	}
 
-	for( i = 0; i < n_points; i++ ) 
+	for( ; i < n_points; i++ )
+		c[i] = 0.0;
+
+	for( i = 0; i < n; i++ ) 
 		c[i] /= sum;
 }
 
@@ -406,7 +413,7 @@ calculate_coefficients_cubic( double *c,
  */
 static void inline
 calculate_coefficients_lanczos( double *c, 
-	const int a, const double shrink, const double x )
+	const int a, const double shrink, const double x, int start, int n )
 {
 	/* Needs to be in sync with vips_reduce_get_points().
 	 */
@@ -417,8 +424,8 @@ calculate_coefficients_lanczos( double *c,
 	double sum; 
 
 	sum = 0;
-	for( i = 0; i < n_points; i++ ) {
-		const double xp = (i - half) / shrink;
+	for( i = 0; i < n; i++ ) {
+		const double xp = (i + start - half) / shrink;
 
 		double l;
 
@@ -437,7 +444,10 @@ calculate_coefficients_lanczos( double *c,
 		sum += l;
 	}
 
-	for( i = 0; i < n_points; i++ ) 
+	for( ; i < n_points; i++ )
+		c[i] = 0.0;
+
+	for( i = 0; i < n; i++ ) 
 		c[i] /= sum;
 }
 

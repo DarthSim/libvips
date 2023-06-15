@@ -15,10 +15,8 @@
 #include <smmintrin.h>
 
 void
-reduceh_uchar_simd_4bands( VipsPel *pout, VipsPel *pin,
-	int32_t n, int32_t width,
-	int16_t * restrict cs[VIPS_TRANSFORM_SCALE + 1],
-	double Xstart, double Xstep )
+reduceh_uchar_simd_4bands( VipsPel *pout, VipsPel *pin, int32_t n_point,
+	int32_t width, int16_t * restrict c, int32_t * restrict bounds )
 {
 	int32_t x, i;
 
@@ -36,16 +34,12 @@ reduceh_uchar_simd_4bands( VipsPel *pout, VipsPel *pin,
 		-1, -1, -1, 3, -1, -1, -1, 2,
 		-1, -1, -1, 1, -1, -1, -1, 0 );
 
-	double X = Xstart;
+	for( x = 0; x < width; x++ ) {
+		const int left = bounds[0];
+		const int right = bounds[1];
+		const int32_t n = right - left;
 
-	for( x = 0 ; x < width; x++ ) {
-		const int ix = (int) X;
-		const int sx = X * VIPS_TRANSFORM_SCALE * 2;
-		const int six = sx & (VIPS_TRANSFORM_SCALE * 2 - 1);
-		const int tx = (six + 1) >> 1;
-		const int16_t *c = cs[tx];
-
-		uint8_t * restrict p = pin + ix * 4;
+		uint8_t * restrict p = pin + left * 4;
 		uint8_t * restrict q = pout + x * 4;
 
 		__m128i line, pix;
@@ -103,18 +97,16 @@ reduceh_uchar_simd_4bands( VipsPel *pout, VipsPel *pin,
 		const __m128i sum_8 = _mm_packus_epi16( sum_16, sum_16 );
 		*(uint32_t *) q = _mm_cvtsi128_si32( sum_8 );
 
-		X += Xstep;
+		c += n_point;
+		bounds += 2;
 	}
 }
 
 void
-reduceh_uchar_simd_3bands( VipsPel *pout, VipsPel *pin,
-	int32_t n, int32_t width,
-	int16_t * restrict cs[VIPS_TRANSFORM_SCALE + 1],
-	double Xstart, double Xstep )
+reduceh_uchar_simd_3bands( VipsPel *pout, VipsPel *pin, int32_t n_point,
+	int32_t width, int16_t * restrict c, int32_t * restrict bounds )
 {
 	int32_t x, i;
-	double X;
 
 	const __m128i initial = _mm_set1_epi32( VIPS_INTERPOLATE_SCALE >> 1 );
 
@@ -131,7 +123,6 @@ reduceh_uchar_simd_3bands( VipsPel *pout, VipsPel *pin,
 		-1, -1, -1,  1, -1, -1, -1, 0 );
 
 	x = 0;
-	X = Xstart;
 
 	/* We need to load 4-byte aligned groups but we have a 3-band image.
 	 * So when we load or save data, we load or save a few redundant bytes.
@@ -139,13 +130,11 @@ reduceh_uchar_simd_3bands( VipsPel *pout, VipsPel *pin,
 	 * buffers range.
 	 */
 	for( ; x < width - 1; x++ ) {
-		const int ix = (int) X;
-		const int sx = X * VIPS_TRANSFORM_SCALE * 2;
-		const int six = sx & (VIPS_TRANSFORM_SCALE * 2 - 1);
-		const int tx = (six + 1) >> 1;
-		const int16_t *c = cs[tx];
+		const int left = bounds[0];
+		const int right = bounds[1];
+		const int32_t n = right - left;
 
-		uint8_t * restrict p = pin + ix * 3;
+		uint8_t * restrict p = pin + left * 3;
 		uint8_t * restrict q = pout + x * 3;
 
 		__m128i line, pix;
@@ -203,7 +192,8 @@ reduceh_uchar_simd_3bands( VipsPel *pout, VipsPel *pin,
 		const __m128i sum_8 = _mm_packus_epi16( sum_16, sum_16 );
 		*(uint32_t *) q = _mm_cvtsi128_si32( sum_8 );
 
-		X += Xstep;
+		c += n_point;
+		bounds += 2;
 	}
 
 	/* Less optimal but safe approach for the last x.
@@ -212,13 +202,11 @@ reduceh_uchar_simd_3bands( VipsPel *pout, VipsPel *pin,
 	 * carefully save 3 bytes.
 	 */
 	for( ; x < width; x++ ) {
-		const int ix = (int) X;
-		const int sx = X * VIPS_TRANSFORM_SCALE * 2;
-		const int six = sx & (VIPS_TRANSFORM_SCALE * 2 - 1);
-		const int tx = (six + 1) >> 1;
-		const int16_t *c = cs[tx];
+		const int left = bounds[0];
+		const int right = bounds[1];
+		const int32_t n = right - left;
 
-		uint8_t * restrict p = pin + ix * 3;
+		uint8_t * restrict p = pin + left * 3;
 		uint8_t * restrict q = pout + x * 3;
 
 		__m128i pix, vc;
@@ -247,23 +235,23 @@ reduceh_uchar_simd_3bands( VipsPel *pout, VipsPel *pin,
 		q[1] = ((uint8_t *)(&qq))[1];
 		q[2] = ((uint8_t *)(&qq))[2];
 
-		X += Xstep;
+		c += n_point;
+		bounds += 2;
 	}
 }
 
 void
-reduceh_uchar_simd( VipsPel *pout, VipsPel *pin, int32_t bands,
-	int32_t n, int32_t width,
-	int16_t * restrict cs[VIPS_TRANSFORM_SCALE + 1],
-	double Xstart, double Xstep ) {
+reduceh_uchar_simd( VipsPel *pout, VipsPel *pin, int32_t n_point,
+	int32_t bands, int32_t width, int16_t * restrict c,
+	int32_t * restrict bounds ) {
 
 	switch( bands ) {
 	case 4:
 		return reduceh_uchar_simd_4bands(
-			pout, pin, n, width, cs, Xstart, Xstep );
+			pout, pin, n_point, width, c, bounds );
 	case 3:
 		return reduceh_uchar_simd_3bands(
-			pout, pin, n, width, cs, Xstart, Xstep );
+			pout, pin, n_point, width, c, bounds );
 	default:
 		g_assert_not_reached();
 	}
