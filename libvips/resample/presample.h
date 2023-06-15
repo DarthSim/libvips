@@ -69,17 +69,16 @@ GType vips_resample_get_type( void );
  */
 #define MAX_POINT (2000)
 
-int vips_reduce_get_points( VipsKernel kernel, double shrink );
-void vips_reduce_make_mask( double *c, 
-	VipsKernel kernel, double shrink, double x );
+int vips_reduce_get_points(VipsKernel kernel, double shrink);
+void vips_reduce_make_mask(double *c,
+	VipsKernel kernel, double shrink, double x, int start, int n);
 
 #if HAVE_SIMD
 void reducev_uchar_simd(VipsPel *pout, VipsPel *pin,
-	int32_t n, int32_t ne, int32_t lskip, const int16_t *restrict k);
-void reduceh_uchar_simd(VipsPel *pout, VipsPel *pin, int32_t bands,
-	int32_t n, int32_t width,
-	int16_t *restrict cs[VIPS_TRANSFORM_SCALE + 1],
-	double Xstart, double Xstep);
+	int32_t n, int32_t ne, int32_t lskip, const int16_t *restrict c);
+void reduceh_uchar_simd(VipsPel *pout, VipsPel *pin, int32_t width,
+	int32_t bands, int16_t *restrict c, int32_t c_stride,
+	int32_t *restrict bounds);
 #endif /*HAVE_SIMD*/
 
 #ifdef __cplusplus

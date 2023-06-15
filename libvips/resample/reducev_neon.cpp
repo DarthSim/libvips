@@ -149,8 +149,7 @@ reducev_uchar_simd(VipsPel *pout, VipsPel *pin,
 		for (; i <= n - 2; i += 2) {
 			/* Load two coeffs
 			 */
-			vc = vmovl_s16(vreinterpret_s16_s32(
-				vdup_n_s32(*(int32_t *) &c[i])));
+			vc = int32x4_t{ c[i], c[i + 1], 0, 0 };
 
 			col = int32x4_t{p[0], p[lskip], 0, 0};
 			p += lskip * 2;

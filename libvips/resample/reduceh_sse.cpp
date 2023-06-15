@@ -15,13 +15,10 @@
 #include <smmintrin.h>
 
 void
-reduceh_uchar_simd(VipsPel *pout, VipsPel *pin, int32_t bands,
-	int32_t n, int32_t width,
-	int16_t *restrict cs[VIPS_TRANSFORM_SCALE + 1],
-	double Xstart, double Xstep)
+reduceh_uchar_simd(VipsPel *pout, VipsPel *pin, int32_t width, int32_t bands,
+	int16_t *restrict c, int32_t c_stride, int32_t *restrict bounds)
 {
 	int32_t x, i;
-	double X = Xstart;
 
 	__m128i line8, line16, vc_lo, vc_hi;
 	__m128i sum;
@@ -66,13 +63,11 @@ reduceh_uchar_simd(VipsPel *pout, VipsPel *pin, int32_t bands,
 		(__m128i *) (bands == 3 ? tbl3_4 : tbl4_4));
 
 	for (x = 0; x < width; x++) {
-		const int ix = (int) X;
-		const int sx = X * VIPS_TRANSFORM_SCALE * 2;
-		const int six = sx & (VIPS_TRANSFORM_SCALE * 2 - 1);
-		const int tx = (six + 1) >> 1;
-		const int16_t *c = cs[tx];
+		const int left = bounds[0];
+		const int right = bounds[1];
+		const int32_t n = right - left;
 
-		uint8_t *restrict p = pin + ix * bands;
+		uint8_t *restrict p = pin + left * bands;
 		uint8_t *restrict q = pout + x * bands;
 
 		sum = initial;
@@ -119,7 +114,8 @@ reduceh_uchar_simd(VipsPel *pout, VipsPel *pin, int32_t bands,
 		sum = _mm_packs_epi32(sum, sum);
 		_mm_storeu_si64(q, _mm_packus_epi16(sum, sum));
 
-		X += Xstep;
+		c += c_stride;
+		bounds += 2;
 	}
 }
 
