@@ -103,6 +103,8 @@ typedef struct _VipsForeignSaveHeif {
 	 */
 	VipsForeignHeifEncoder selected_encoder;
 
+	int max_threads;
+
 	/* The image we save. This is a copy of save->ready since we need to
 	 * be able to update the metadata.
 	 */
@@ -526,6 +528,16 @@ vips_foreign_save_heif_build( VipsObject *object )
 		return( -1 );
 	}
 
+	if( heif->max_threads ) {
+		error = heif_encoder_set_parameter_integer( heif->encoder,
+			"threads", heif->max_threads );
+		if( error.code &&
+			error.subcode != heif_suberror_Unsupported_parameter ) {
+			vips__heif_error( &error );
+			return( -1 );
+		}
+	}
+
 	chroma = heif->subsample_mode == VIPS_FOREIGN_SUBSAMPLE_OFF ||
 		(heif->subsample_mode == VIPS_FOREIGN_SUBSAMPLE_AUTO &&
 			heif->Q >= 90) ? "444" : "420";
@@ -694,6 +706,13 @@ vips_foreign_save_heif_class_init( VipsForeignSaveHeifClass *class )
 		G_STRUCT_OFFSET( VipsForeignSaveHeif, selected_encoder ),
 		VIPS_TYPE_FOREIGN_HEIF_ENCODER,
 		VIPS_FOREIGN_HEIF_ENCODER_AUTO );
+
+	VIPS_ARG_INT( class, "max_threads", 19,
+		_( "Max threads" ),
+		_( "Max threads allowed to use" ),
+		VIPS_ARGUMENT_OPTIONAL_INPUT,
+		G_STRUCT_OFFSET( VipsForeignSaveHeif, max_threads ),
+		0, 16, 0 );
 }
 
 static void
@@ -705,6 +724,7 @@ vips_foreign_save_heif_init( VipsForeignSaveHeif *heif )
 	heif->compression = VIPS_FOREIGN_HEIF_COMPRESSION_HEVC;
 	heif->effort = 4;
 	heif->subsample_mode = VIPS_FOREIGN_SUBSAMPLE_AUTO;
+	heif->max_threads = 0;
 
 	/* Deprecated.
 	 */
