@@ -143,6 +143,12 @@ vips_extract_area_build( VipsObject *object )
 		build( object ) )
 		return( -1 );
 
+	if( extract->left == 0 && extract->width == extract->in->Xsize &&
+		extract->top == 0 && extract->height == extract->in->Ysize ) {
+		return( vips_copy( extract->in, &conversion->out,
+			"xoffset", 0, "yoffset", 0, NULL ) );
+	}
+
 	if( extract->left + extract->width > extract->in->Xsize ||
 		extract->top + extract->height > extract->in->Ysize ||
 		extract->left < 0 || extract->top < 0 ||
