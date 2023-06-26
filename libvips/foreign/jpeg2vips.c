@@ -914,22 +914,30 @@ read_jpeg_generate( VipsRegion *or,
 		return( -1 );
 	}
 
-	for( y = 0; y < r->height; y++ ) {
-		JSAMPROW row_pointer[1];
+	int ready = 0;
+	JSAMPROW row_pointer[8];
 
-		row_pointer[0] = (JSAMPLE *) 
+	for( y = 0; y < r->height; y++ )
+		row_pointer[y] = (JSAMPLE *)
 			VIPS_REGION_ADDR( or, 0, r->top + y );
 
-		jpeg_read_scanlines( cinfo, &row_pointer[0], 1 );
+	while( ready < r->height ) {
+		const int curr_read = jpeg_read_scanlines(
+			cinfo, &row_pointer[ready], r->height - ready );
 
-		if( jpeg->invert_pels ) {
-			int x;
+		if( !curr_read )
+			break;
 
+		ready += curr_read;
+		jpeg->y_pos += curr_read;
+	}
+
+	if( jpeg->invert_pels ) {
+		int x;
+
+		for( y = 0; y < r->height; y++ )
 			for( x = 0; x < sz; x++ )
-				row_pointer[0][x] = 255 - row_pointer[0][x];
-		}
-
-		jpeg->y_pos += 1; 
+				row_pointer[y][x] = 255 - row_pointer[y][x];
 	}
 
 	VIPS_GATE_STOP( "read_jpeg_generate: work" );
