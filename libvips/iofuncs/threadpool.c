@@ -534,6 +534,48 @@ vips_threadpool_new( VipsImage *im )
 	return( pool );
 }
 
+int
+vips_threadpool_run_sync( VipsImage *im,
+	VipsThreadStartFn start,
+	VipsThreadpoolAllocateFn allocate,
+	VipsThreadpoolWorkFn work,
+	VipsThreadpoolProgressFn progress,
+	void *a )
+{
+	VipsThreadState *state;
+	gboolean stop = FALSE, error = FALSE;
+
+	if( !(state = start( im, a )) ) {
+		return( -1 );
+	}
+
+	for(;;) {
+		if( allocate( state, a, &stop ) ) {
+			error = TRUE;
+			break;
+		}
+
+		if( stop )
+			break;
+
+		if( work( state, a ) ) {
+			error = TRUE;
+			break;
+		}
+
+		if( progress && progress( a ) ) {
+			error = TRUE;
+			break;
+		}
+	}
+
+	VIPS_FREEF( g_object_unref, state );
+
+	vips_image_minimise_all( im );
+
+	return( error ? -1 : 0 );
+}
+
 /**
  * VipsThreadpoolStartFn:
  * @a: client data
@@ -644,6 +686,10 @@ vips_threadpool_run( VipsImage *im,
 	VipsThreadpoolProgressFn progress, 
 	void *a )
 {
+	if( vips_concurrency_get() == 1 )
+		return( vips_threadpool_run_sync(
+			im, start, allocate, work, progress, a ) );
+
 	VipsThreadpool *pool; 
 	int result;
 	int n_waiting;
