@@ -184,6 +184,9 @@ typedef struct _VipsForeignSaveWebp {
 	 * for libwebp. We need to copy each frame to a local buffer.
 	 */
 	VipsPel *frame_bytes;
+	int frame_bytes_stride;
+
+	WebPPicture pic;
 } VipsForeignSaveWebp;
 
 typedef VipsForeignSaveClass VipsForeignSaveWebpClass;
@@ -225,64 +228,39 @@ vips_foreign_save_webp_dispose( GObject *gobject )
 
 	VIPS_UNREF( webp->target );
 
-	VIPS_FREE( webp->frame_bytes );
+	WebPPictureFree( &webp->pic );
 
 	G_OBJECT_CLASS( vips_foreign_save_webp_parent_class )->
 		dispose( gobject );
 }
 
 static gboolean
-vips_foreign_save_webp_pic_init( VipsForeignSaveWebp *write, WebPPicture *pic )
+vips_foreign_save_webp_pic_init( VipsForeignSaveWebp *write )
 {
 	VipsForeignSave *save = (VipsForeignSave *) write;
 
-	if( !WebPPictureInit( pic ) ) {
+	if( !WebPPictureInit( &write->pic ) ) {
 		vips_error( "webpsave", "%s", _( "picture version error" ) );
 		return( FALSE );
 	}
-	pic->writer = WebPMemoryWrite;
-	pic->custom_ptr = (void *) &write->memory_writer;
-	pic->progress_hook = vips_foreign_save_webp_progress_hook;
-	pic->user_data = (void *) save->in;
 
-	/* Smart subsampling needs use_argb because it is applied during
-	 * RGB to YUV conversion.
-	 */
-	pic->use_argb = write->lossless ||
-		write->near_lossless ||
-		write->smart_subsample;
+	write->pic.writer = WebPMemoryWrite;
+	write->pic.custom_ptr = (void *) &write->memory_writer;
+	write->pic.progress_hook = vips_foreign_save_webp_progress_hook;
+	write->pic.user_data = (void *) save->in;
+	write->pic.width = write->image->Xsize;
+	write->pic.height = vips_image_get_page_height( write->image );
+	write->pic.use_argb = TRUE;
 
-	return( TRUE );
-}
-
-/* Write a VipsImage into an unintialised pic.
- */
-static int
-vips_foreign_save_webp_write_webp_image( VipsForeignSaveWebp *write,
-	const VipsPel *imagedata, WebPPicture *pic )
-{
-	webp_import import;
-	int page_height = vips_image_get_page_height( write->image );
-
-	if( !vips_foreign_save_webp_pic_init( write, pic ) )
-		return( -1 );
-
-	pic->width = write->image->Xsize;
-	pic->height = page_height;
-
-	if( write->image->Bands == 4 )
-		import = WebPPictureImportRGBA;
-	else
-		import = WebPPictureImportRGB;
-
-	if( !import( pic, imagedata,
-		write->image->Xsize * write->image->Bands ) ) {
-		WebPPictureFree( pic );
-		vips_error( "webpsave", "%s", _( "picture memory error" ) );
-		return( -1 );
+	if( !WebPPictureAlloc( &write->pic ) ) {
+		vips_error( "webpsave", "%s", _( "picture allocation error" ) );
+		return( FALSE );
 	}
 
-	return( 0 );
+	write->frame_bytes = (VipsPel *)(write->pic.argb);
+	write->frame_bytes_stride = write->pic.argb_stride * 4;
+
+	return( TRUE );
 }
 
 /* We have a complete frame --- write!
@@ -290,19 +268,13 @@ vips_foreign_save_webp_write_webp_image( VipsForeignSaveWebp *write,
 static int
 vips_foreign_save_webp_write_frame( VipsForeignSaveWebp *webp)
 {
-	WebPPicture pic;
 	VipsObjectClass *class = VIPS_OBJECT_GET_CLASS( webp );
-
-	if( vips_foreign_save_webp_write_webp_image( webp, webp->frame_bytes,
-			&pic ) )
-		return( -1 );
 
 	/* Animated write
 	 */
 	if( webp->mode == VIPS_FOREIGN_SAVE_WEBP_MODE_ANIM ) {
 		if( !WebPAnimEncoderAdd( webp->enc,
-			&pic, webp->timestamp_ms, &webp->config ) ) {
-			WebPPictureFree( &pic );
+			&webp->pic, webp->timestamp_ms, &webp->config ) ) {
 			vips_error( class->nickname,
 				"%s", _( "anim add error" ) );
 			return( -1 );
@@ -319,15 +291,12 @@ vips_foreign_save_webp_write_frame( VipsForeignSaveWebp *webp)
 	else {
 		/* Single image write
 		 */
-		if( !WebPEncode( &webp->config, &pic ) ) {
-			WebPPictureFree( &pic );
+		if( !WebPEncode( &webp->config, &webp->pic ) ) {
 			vips_error( "webpsave", "%s",
 				_( "unable to encode" ) );
 			return( -1 );
 		}
 	}
-
-	WebPPictureFree( &pic );
 
 	return( 0 );
 }
@@ -339,16 +308,27 @@ static int
 vips_foreign_save_webp_sink_disc( VipsRegion *region, VipsRect *area, void *a )
 {
 	VipsForeignSaveWebp *webp = (VipsForeignSaveWebp*) a;
-	int i;
+	int x, y;
 	int page_height = vips_image_get_page_height( webp->image );
+
+	int bands = webp->image->Bands;
 
 	/* Write the new pixels into the frame.
 	 */
-	for( i = 0; i < area->height; i++ ) {
-		memcpy( webp->frame_bytes + area->width *
-				webp->write_y * webp->image->Bands,
-			VIPS_REGION_ADDR( region, 0, area->top + i ),
-			area->width * webp->image->Bands );
+	for( y = 0; y < area->height; y++ ) {
+		VipsPel *p = VIPS_REGION_ADDR( region, 0, area->top + y );
+		VipsPel *q = webp->frame_bytes +
+			webp->frame_bytes_stride * webp->write_y;
+
+		for( x = 0; x < area->width; x++ ) {
+			q[0] = p[2];
+			q[1] = p[1];
+			q[2] = p[0];
+			q[3] = bands == 4 ? p[3] : 255;
+
+			p += bands;
+			q += 4;
+		}
 
 		webp->write_y += 1;
 
@@ -683,18 +663,6 @@ vips_foreign_save_webp_build( VipsObject *object )
 		return( -1 );
 	}
 
-	/* RGB(A) frame as a contiguous buffer.
-	 */
-	size_t frame_size = 
-		(size_t) webp->image->Bands * webp->image->Xsize * page_height;
-	webp->frame_bytes = g_try_malloc( frame_size );
-	if( webp->frame_bytes == NULL ) {
-		vips_error( "webpsave", 
-			_( "failed to allocate %zu bytes" ), frame_size );
-		vips_foreign_save_webp_unset( webp );
-		return( -1 );
-	}
-
 	/* Init generic WebP config
 	 */
 	if( vips_foreign_save_webp_init_config( webp ) )
@@ -711,6 +679,9 @@ vips_foreign_save_webp_build( VipsObject *object )
 	if( webp->mode == VIPS_FOREIGN_SAVE_WEBP_MODE_ANIM )
 		if( vips_foreign_save_webp_init_anim_enc( webp ) )
 			return( -1 );
+
+	if( !vips_foreign_save_webp_pic_init( webp ) )
+		return( -1 );
 
 	if( vips_sink_disc( webp->image,
 		vips_foreign_save_webp_sink_disc, webp ) )
