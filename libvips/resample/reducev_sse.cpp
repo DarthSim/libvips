@@ -7,6 +7,7 @@
 
 #include <vips/vips.h>
 #include <vips/internal.h>
+#include <vips/simd.h>
 
 #include "presample.h"
 
@@ -39,7 +40,17 @@ reducev_uchar_simd(VipsPel *pout, VipsPel *pin,
 		-1, -1, -1, 15, -1, -1, -1, 14,
 		-1, -1, -1, 13, -1, -1, -1, 12);
 
-	for (x = 0; x <= ne - 16; x += 16) {
+#if HAVE_AVX2
+	/* Go AVX2 path first if AVX2 is supported
+	 */
+	x = vips_simd_avx2_issupported() ?
+		reducev_uchar_avx2(pout, pin, n, ne, lskip, c) :
+		0;
+#else /*HAVE_AVX2*/
+	x = 0;
+#endif /*HAVE_AVX2*/
+
+	for (; x <= ne - 16; x += 16) {
 		uint8_t *restrict p = (uint8_t *) pin + x;
 		uint8_t *restrict q = (uint8_t *) pout + x;
 

@@ -165,9 +165,10 @@ have_simd = false
 simd_type = 'none'
 
 simd_type_sse = 'SSE'
+simd_type_avx2 = 'SSE + AVX2'
 simd_type_neon = 'NEON'
 
-if get_option('simd')
+if get_option('simd') and target_machine.cpu_family() == 'x86_64'
     sse_check = '''
         #include <smmintrin.h>
 
@@ -191,11 +192,37 @@ if get_option('simd')
         have_simd = true
         simd_type = simd_type_sse
         cfg_var.set('HAVE_SSE', '1')
-        add_global_arguments('-mssse3', language: ['c', 'cpp'])
     endif
 endif
 
-if not have_simd and get_option('simd')
+if get_option('simd') and simd_type == simd_type_sse and target_machine.cpu_family() == 'x86_64'
+    avx2_check = '''
+        #include <immintrin.h>
+
+        int main() {
+            __m256i i32 = _mm256_set_epi32( 8, 7, 6, 5, 4, 3, 2, 1 );
+            i32 = _mm256_shuffle_epi8(i32, i32);
+            i32 = _mm256_add_epi32( i32, i32 );
+
+            __m256 f32 = _mm256_set_ps( 8, 7, 6, 5, 4, 3, 2, 1 );
+            f32 = _mm256_mul_ps( f32, f32 );
+
+            __m256d f64 = _mm256_set_pd( 4, 3, 2, 1 );
+            f64 = _mm256_mul_pd( f64, f64 );
+
+            return _mm256_extract_epi32(i32, 0) +
+                _mm256_cvtss_f32(f32) +
+                _mm256_cvtsd_f64(f64);
+        }
+    '''
+    if cc.links(avx2_check, args: ['-Werror', '-mavx2'], name: 'AVX2 intrinsics check')
+        have_simd = true
+        simd_type = simd_type_avx2
+        cfg_var.set('HAVE_AVX2', '1')
+    endif
+endif
+
+if get_option('simd') and not have_simd and target_machine.cpu_family() == 'aarch64'
     arm_neon_check = '''
         #include <arm_neon.h>
 

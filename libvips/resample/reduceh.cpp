@@ -59,6 +59,7 @@
 #include <vips/vips.h>
 #include <vips/debug.h>
 #include <vips/internal.h>
+#include <vips/simd.h>
 
 #include "presample.h"
 #include "templates.h"
@@ -558,7 +559,8 @@ vips_reduceh_build(VipsObject *object)
 
 #if HAVE_SIMD
 	if (in->BandFmt == VIPS_FORMAT_UCHAR &&
-		(in->Bands == 4 || in->Bands == 3)) {
+		(in->Bands == 4 || in->Bands == 3) &&
+		vips_simd_isenabled()) {
 
 		reduceh->coef_s = VIPS_ARRAY(object, width * reduceh->n_point, short);
 		if (!reduceh->coef_s)

@@ -36,6 +36,7 @@ iofuncs_sources = files(
     'buf.c',
     'window.c',
     'vector.c',
+    'simd.c',
     'system.c',
     'buffer.c',
 )

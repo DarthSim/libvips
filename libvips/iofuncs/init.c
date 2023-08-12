@@ -99,6 +99,7 @@
 #include <vips/thread.h>
 #include <vips/internal.h>
 #include <vips/vector.h>
+#include <vips/simd.h>
 
 #if ENABLE_DEPRECATED
 #include <vips/vips7compat.h>
@@ -622,6 +623,10 @@ vips_init(const char *argv0)
 	/* Get the run-time compiler going.
 	 */
 	vips_vector_init();
+
+	/* Check SIMD intrinsics support.
+	 */
+	vips_simd_init();
 
 #ifdef DEBUG_LEAK
 	vips__image_pixels_quark =

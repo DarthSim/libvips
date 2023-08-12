@@ -72,6 +72,7 @@
 #include <vips/debug.h>
 #include <vips/internal.h>
 #include <vips/vector.h>
+#include <vips/simd.h>
 
 #include "presample.h"
 #include "templates.h"
@@ -174,8 +175,6 @@ vips_reducev_finalize(GObject *gobject)
 
 	G_OBJECT_CLASS(vips_reducev_parent_class)->finalize(gobject);
 }
-
-#if !HAVE_SIMD
 
 #define TEMP(N, S) vips_vector_temporary(v, (char *) N, S)
 #define PARAM(N, S) vips_vector_parameter(v, (char *) N, S)
@@ -331,8 +330,6 @@ vips_reducev_compile(VipsReducev *reducev)
 	return 0;
 }
 
-#endif /*!HAVE_SIMD*/
-
 /* Our sequence value.
  */
 typedef struct {
@@ -382,19 +379,21 @@ vips_reducev_start(VipsImage *out, void *a, void *b)
 		return NULL;
 	}
 
-#if !HAVE_SIMD
-	int sz = VIPS_IMAGE_N_ELEMENTS(in);
+	/* Vector mode.
+	 */
+	if (reducev->n_pass) {
+		int sz = VIPS_IMAGE_N_ELEMENTS(in);
 
-	seq->t1 = NULL;
-	seq->t2 = NULL;
+		seq->t1 = NULL;
+		seq->t2 = NULL;
 
-	seq->t1 = VIPS_ARRAY(NULL, sz, signed short);
-	seq->t2 = VIPS_ARRAY(NULL, sz, signed short);
-	if (!seq->t1 || !seq->t2) {
-		vips_reducev_stop(seq, NULL, NULL);
-		return NULL;
+		seq->t1 = VIPS_ARRAY(NULL, sz, signed short);
+		seq->t2 = VIPS_ARRAY(NULL, sz, signed short);
+		if (!seq->t1 || !seq->t2) {
+			vips_reducev_stop(seq, NULL, NULL);
+			return NULL;
+		}
 	}
-#endif /*!HAVE_SIMD*/
 
 	return seq;
 }
@@ -676,7 +675,7 @@ vips_reducev_simd_gen(VipsRegion *out_region, void *vseq,
 	return (0);
 }
 
-#else /*HAVE_SIMD*/
+#endif /*HAVE_SIMD*/
 
 /* Process uchar images with a vector path.
  */
@@ -775,8 +774,6 @@ vips_reducev_vector_gen(VipsRegion *out_region, void *vseq,
 	return 0;
 }
 
-#endif /*HAVE_SIMD*/
-
 static int
 vips_reducev_build(VipsObject *object)
 {
@@ -859,9 +856,8 @@ vips_reducev_build(VipsObject *object)
 	 */
 	reducev->voffset = (1 + extra_pixels) / 2.0 - 1;
 
-#if !HAVE_SIMD
 	if (in->BandFmt == VIPS_FORMAT_UCHAR &&
-		vips_vector_isenabled() &&
+		vips_vector_isenabled() && !vips_simd_isenabled() &&
 		!vips_reducev_compile(reducev)) {
 
 		double tmp_matrixf[MAX_POINT];
@@ -884,9 +880,8 @@ vips_reducev_build(VipsObject *object)
 
 		g_info("reducev: using vector path");
 		generate = vips_reducev_vector_gen;
-	} else
-#endif /*!HAVE_SIMD*/
-	{
+	}
+	else {
 		double tmp_matrixf[MAX_POINT];
 
 		reducev->bounds = VIPS_ARRAY(NULL, height * 2, int);
@@ -894,7 +889,9 @@ vips_reducev_build(VipsObject *object)
 			return (-1);
 
 #if HAVE_SIMD
-		if (in->BandFmt == VIPS_FORMAT_UCHAR) {
+		if (in->BandFmt == VIPS_FORMAT_UCHAR
+			&& vips_simd_isenabled()) {
+
 			reducev->coef_s =
 				VIPS_ARRAY(NULL, height * reducev->n_point, short);
 			if (!reducev->coef_s)
@@ -981,7 +978,6 @@ vips_reducev_build(VipsObject *object)
 		return -1;
 	in = t[1];
 
-#if !HAVE_SIMD
 	if (generate == vips_reducev_vector_gen) {
 		/* Add new pixels around the input so we can interpolate
 		 * at the edges.
@@ -994,7 +990,6 @@ vips_reducev_build(VipsObject *object)
 			return (-1);
 		in = t[2];
 	}
-#endif /*!HAVE_SIMD*/
 
 	t[3] = vips_image_new();
 	if (vips_image_pipelinev(t[3],

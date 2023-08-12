@@ -79,6 +79,10 @@ void reducev_uchar_simd(VipsPel *pout, VipsPel *pin,
 void reduceh_uchar_simd(VipsPel *pout, VipsPel *pin, int32_t n_point,
 	int32_t bands, int32_t width, int16_t *restrict c,
 	int32_t *restrict bounds);
+#if HAVE_AVX2
+int reducev_uchar_avx2(VipsPel *pout, VipsPel *pin,
+	int32_t n, int32_t ne, int32_t lskip, const int16_t *restrict k);
+#endif /*HAVE_AVX2*/
 #endif /*HAVE_SIMD*/
 
 #ifdef __cplusplus

@@ -14,6 +14,7 @@ public_other_headers = files(
     'transform.h',
     'util.h',
     'vector.h',
+    'simd.h',
 )
 
 public_deprecated_headers = files(

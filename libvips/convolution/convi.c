@@ -124,6 +124,7 @@
 
 #include <vips/vips.h>
 #include <vips/internal.h>
+#include <vips/simd.h>
 
 #include "pconvolution.h"
 
@@ -283,8 +284,6 @@ vips_convi_start(VipsImage *out, void *a, void *b)
 
 	return (void *) seq;
 }
-
-#if !HAVE_SIMD
 
 #define TEMP(N, S) vips_vector_temporary(v, (char *) N, S)
 #define PARAM(N, S) vips_vector_parameter(v, (char *) N, S)
@@ -573,8 +572,6 @@ vips_convi_gen_vector(VipsRegion *out_region,
 
 	return 0;
 }
-
-#endif /*!HAVE_SIMD*/
 
 /* INT inner loops.
  */
@@ -914,10 +911,12 @@ vips__image_intize(VipsImage *in, VipsImage **out)
 /* Make an int version of a mask. Each element is 8.8 float, with the same
  * exponent for each element (so just 8 bits in @out).
  *
+ * @simd defines if we need to make a matrix for the simd mode
+ *
  * @out is a w x h int array.
  */
 static int
-vips_convi_intize(VipsConvi *convi, VipsImage *M)
+vips_convi_intize(VipsConvi *convi, VipsImage *M, gboolean simd)
 {
 	VipsImage *t;
 	double scale;
@@ -973,78 +972,79 @@ vips_convi_intize(VipsConvi *convi, VipsImage *M)
 	 */
 	shift = ceil(log2(mx) + 1);
 
-#if HAVE_SIMD
-	/* We need to sum n_points, so we have to shift right before adding a
-	 * new value to make sure we have enough range.
-	 */
-	if (ceil(log2(convi->n_point)) > 10) {
-		g_info("vips_convi_intize: mask too large");
-		return -1;
-	}
-
-	/* With that already done, the final shift must be ...
-	 */
-	convi->exp = 7 - shift;
-
-	if (!(convi->mant = VIPS_ARRAY(convi, convi->n_point, short)) ||
-		!(convi->coeff_pos = VIPS_ARRAY(convi, convi->n_point, int)))
-		return -1;
-
-	convi->nnz = 0;
-	for (i = 0; i < convi->n_point; i++) {
-		/* 128 since this is signed.
-		 */
-		convi->mant[i] = VIPS_RINT(128 * scaled[i] * pow(2, -shift));
-
-		if (convi->mant[i] < -128 ||
-			convi->mant[i] > 127) {
-			g_info("vips_convi_intize: mask range too large");
+	if (simd) {
+		/* We need to sum n_points, so we have to shift right before adding a
+		* new value to make sure we have enough range.
+		*/
+		if (ceil(log2(convi->n_point)) > 10) {
+			g_info("vips_convi_intize: mask too large");
 			return -1;
 		}
 
-		if (convi->mant[i]) {
-			convi->mant[convi->nnz] = convi->mant[i];
-			convi->coeff_pos[convi->nnz] = i;
-			convi->nnz += 1;
+		/* With that already done, the final shift must be ...
+		*/
+		convi->exp = 7 - shift;
+
+		if (!(convi->mant = VIPS_ARRAY(convi, convi->n_point, short)) ||
+			!(convi->coeff_pos = VIPS_ARRAY(convi, convi->n_point, int)))
+			return -1;
+
+		convi->nnz = 0;
+		for (i = 0; i < convi->n_point; i++) {
+			/* 128 since this is signed.
+			*/
+			convi->mant[i] = VIPS_RINT(128 * scaled[i] * pow(2, -shift));
+
+			if (convi->mant[i] < -128 ||
+				convi->mant[i] > 127) {
+				g_info("vips_convi_intize: mask range too large");
+				return -1;
+			}
+
+			if (convi->mant[i]) {
+				convi->mant[convi->nnz] = convi->mant[i];
+				convi->coeff_pos[convi->nnz] = i;
+				convi->nnz += 1;
+			}
+		}
+
+		/* Was the whole mask zero? We must have at least 1 element
+		* in there: set it to zero.
+		*/
+		if (convi->nnz == 0) {
+			convi->mant[0] = 0;
+			convi->coeff_pos[0] = 0;
+			convi->nnz = 1;
 		}
 	}
-
-	/* Was the whole mask zero? We must have at least 1 element
-	 * in there: set it to zero.
-	 */
-	if (convi->nnz == 0) {
-		convi->mant[0] = 0;
-		convi->coeff_pos[0] = 0;
-		convi->nnz = 1;
-	}
-#else  /*HAVE_SIMD*/
-	/* We need to sum n_points, so we have to shift right before adding a
-	 * new value to make sure we have enough range.
-	 */
-	convi->sexp = ceil(log2(convi->n_point));
-	if (convi->sexp > 10) {
-		g_info("vips_convi_intize: mask too large");
-		return -1;
-	}
-
-	/* With that already done, the final shift must be ...
-	 */
-	convi->exp = 7 - shift - convi->sexp;
-
-	if (!(convi->mant = VIPS_ARRAY(convi, convi->n_point, short)))
-		return -1;
-	for (i = 0; i < convi->n_point; i++) {
-		/* 128 since this is signed.
-		 */
-		convi->mant[i] = VIPS_RINT(128 * scaled[i] * pow(2, -shift));
-
-		if (convi->mant[i] < -128 ||
-			convi->mant[i] > 127) {
-			g_info("vips_convi_intize: mask range too large");
+	else { /*simd*/
+		/* We need to sum n_points, so we have to shift right before adding a
+		* new value to make sure we have enough range.
+		*/
+		convi->sexp = ceil(log2(convi->n_point));
+		if (convi->sexp > 10) {
+			g_info("vips_convi_intize: mask too large");
 			return -1;
 		}
-	}
-#endif /*HAVE_SIMD*/
+
+		/* With that already done, the final shift must be ...
+		*/
+		convi->exp = 7 - shift - convi->sexp;
+
+		if (!(convi->mant = VIPS_ARRAY(convi, convi->n_point, short)))
+			return -1;
+		for (i = 0; i < convi->n_point; i++) {
+			/* 128 since this is signed.
+			*/
+			convi->mant[i] = VIPS_RINT(128 * scaled[i] * pow(2, -shift));
+
+			if (convi->mant[i] < -128 ||
+				convi->mant[i] > 127) {
+				g_info("vips_convi_intize: mask range too large");
+				return -1;
+			}
+		}
+	} /*simd*/
 
 #ifdef DEBUG_COMPILE
 	{
@@ -1073,22 +1073,21 @@ vips_convi_intize(VipsConvi *convi, VipsImage *M)
 		true_sum = 0.0;
 		int_sum = 0;
 
-#if HAVE_SIMD
-		for (i = 0; i < convi->nnz; i++) {
-			true_sum += 128 * scaled[i];
-			int_sum += 128 * convi->mant[i];
-		}
-#else  /*HAVE_SIMD*/
-		for (i = 0; i < convi->n_point; i++) {
-			int value;
+		if (simd)
+			for (i = 0; i < convi->nnz; i++) {
+				true_sum += 128 * scaled[i];
+				int_sum += 128 * convi->mant[i];
+			}
+		else
+			for (i = 0; i < convi->n_point; i++) {
+				int value;
 
-			true_sum += 128 * scaled[i];
-			value = 128 * convi->mant[i];
-			value = (value + (1 << (convi->sexp - 1))) >> convi->sexp;
-			int_sum += value;
-			int_sum = VIPS_CLIP(SHRT_MIN, int_sum, SHRT_MAX);
-		}
-#endif /*HAVE_SIMD*/
+				true_sum += 128 * scaled[i];
+				value = 128 * convi->mant[i];
+				value = (value + (1 << (convi->sexp - 1))) >> convi->sexp;
+				int_sum += value;
+				int_sum = VIPS_CLIP(SHRT_MIN, int_sum, SHRT_MAX);
+			}
 
 		true_value = VIPS_CLIP(0, true_sum, 255);
 
@@ -1139,27 +1138,27 @@ vips_convi_build(VipsObject *object)
 	 */
 	generate = vips_convi_gen;
 
-#if HAVE_SIMD
-	/* For uchar input, try to make a SIMD path.
-	 */
-	if (in->BandFmt == VIPS_FORMAT_UCHAR &&
-		!vips_convi_intize(convi, M)) {
-
-		generate = vips_convi_gen_simd;
-		g_info("convi: using simd path");
-	}
-#else  /*HAVE_SIMD*/
 	/* For uchar input, try to make a vector path.
 	 */
-	if (vips_vector_isenabled() &&
+	if (vips_vector_isenabled() && !vips_simd_isenabled() &&
 		in->BandFmt == VIPS_FORMAT_UCHAR) {
-		if (!vips_convi_intize(convi, M) &&
+		if (!vips_convi_intize(convi, M, FALSE) &&
 			!vips_convi_compile(convi, in)) {
 			generate = vips_convi_gen_vector;
 			g_info("convi: using vector path");
 		}
 		else
 			vips_convi_compile_free(convi);
+	}
+#if HAVE_SIMD
+	/* For uchar input, try to make a SIMD path.
+	 */
+	else if (vips_simd_isenabled() &&
+		in->BandFmt == VIPS_FORMAT_UCHAR &&
+		!vips_convi_intize(convi, M, TRUE)) {
+
+		generate = vips_convi_gen_simd;
+		g_info("convi: using simd path");
 	}
 #endif /*HAVE_SIMD*/
 
