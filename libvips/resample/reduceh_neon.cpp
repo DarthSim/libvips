@@ -21,7 +21,8 @@ void
 reduceh_uchar_simd_4bands( VipsPel *pout, VipsPel *pin, int32_t n_point,
 	int32_t width, int16_t * restrict c, int32_t * restrict bounds )
 {
-	int32_t x, i;
+	int32_t x, i, c32;
+	uint32_t p32;
 
 	const int32x4_t initial = vdupq_n_s32( VIPS_INTERPOLATE_SCALE >> 1 );
 
@@ -56,10 +57,10 @@ reduceh_uchar_simd_4bands( VipsPel *pout, VipsPel *pin, int32_t n_point,
 		for( ; i <= n - 4; i += 4 ) {
 			/* Load four coeffs
 			 */
-			vc_lo = vreinterpret_s16_s32(
-				vdup_n_s32( *(int32_t *) &c[i] ) );
-			vc_hi = vreinterpret_s16_s32(
-				vdup_n_s32( *(int32_t *) &c[i + 2] ) );
+			memcpy(&c32, &c[i], sizeof(int32_t));
+			vc_lo = vreinterpret_s16_s32( vdup_n_s32( c32 ) );
+			memcpy(&c32, &c[i + 2], sizeof(int32_t));
+			vc_hi = vreinterpret_s16_s32( vdup_n_s32( c32 ) );
 
 			line16 = vld1q_u8( p );
 			p += 16;
@@ -74,8 +75,8 @@ reduceh_uchar_simd_4bands( VipsPel *pout, VipsPel *pin, int32_t n_point,
 		}
 
 		for( ; i <= n - 2; i += 2 ) {
-			vc = vreinterpret_s16_s32(
-				vdup_n_s32( *(int32_t *) &c[i] ) );
+			memcpy(&c32, &c[i], sizeof(int32_t));
+			vc = vreinterpret_s16_s32( vdup_n_s32( c32 ) );
 
 			line8 = vld1_u8( p );
 			p += 8;
@@ -88,8 +89,8 @@ reduceh_uchar_simd_4bands( VipsPel *pout, VipsPel *pin, int32_t n_point,
 		for( ; i < n; i++ ) {
 			vc = vdup_n_s16( c[i] );
 
-			line8 = vreinterpret_u8_u32(
-				vdup_n_u32( *(uint32_t *) p ) );
+			memcpy(&p32, p, sizeof(uint32_t));
+			line8 = vreinterpret_u8_u32( vdup_n_u32( p32 ) );
 			p += 4;
 
 			pix4 = vreinterpret_s16_u8( vtbl1_u8( line8, tbl4 ) );
@@ -115,7 +116,8 @@ void
 reduceh_uchar_simd_3bands( VipsPel *pout, VipsPel *pin, int32_t n_point,
 	int32_t width, int16_t * restrict c, int32_t * restrict bounds )
 {
-	int32_t x, i;
+	int32_t x, i, c32;
+	uint32_t p32;
 
 	const int32x4_t initial = vdupq_n_s32( VIPS_INTERPOLATE_SCALE >> 1 );
 
@@ -157,10 +159,10 @@ reduceh_uchar_simd_3bands( VipsPel *pout, VipsPel *pin, int32_t n_point,
 		for( ; i <= n - 4; i += 4 ) {
 			/* Load four coeffs
 			 */
-			vc_lo = vreinterpret_s16_s32(
-				vdup_n_s32( *(int32_t *) &c[i]) );
-			vc_hi = vreinterpret_s16_s32(
-				vdup_n_s32( *(int32_t *) &c[i + 2]) );
+			memcpy(&c32, &c[i], sizeof(int32_t));
+			vc_lo = vreinterpret_s16_s32( vdup_n_s32( c32 ) );
+			memcpy(&c32, &c[i + 2], sizeof(int32_t));
+			vc_hi = vreinterpret_s16_s32( vdup_n_s32( c32 ) );
 
 			line16 = vld1q_u8( p );
 			p += 12;
@@ -175,8 +177,8 @@ reduceh_uchar_simd_3bands( VipsPel *pout, VipsPel *pin, int32_t n_point,
 		}
 
 		for( ; i <= n - 2; i += 2 ) {
-			vc = vreinterpret_s16_s32(
-				vdup_n_s32( *(int32_t *) &c[i] ) );
+			memcpy(&c32, &c[i], sizeof(int32_t));
+			vc = vreinterpret_s16_s32( vdup_n_s32( c32 ) );
 
 			line8 = vld1_u8( p );
 			p += 6;
@@ -189,8 +191,8 @@ reduceh_uchar_simd_3bands( VipsPel *pout, VipsPel *pin, int32_t n_point,
 		for( ; i < n; i++ ) {
 			vc = vdup_n_s16( c[i] );
 
-			line8 = vreinterpret_u8_u32(
-				vdup_n_u32( *(uint32_t *) p ) );
+			memcpy(&p32, p, sizeof(uint32_t));
+			line8 = vreinterpret_u8_u32( vdup_n_u32( p32 ) );
 			p += 3;
 
 			pix4 = vreinterpret_s16_u8( vtbl1_u8( line8, tbl4 ) );

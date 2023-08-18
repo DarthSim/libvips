@@ -26,7 +26,7 @@ convi_uchar_simd( VipsPel *pout, VipsPel *pin,
 	int32_t n, int32_t ne, int32_t offset, int32_t * restrict offsets,
 	int16_t * restrict mant, int32_t exp )
 {
-	int32_t x, i;
+	int32_t x, i, mant32;
 
     	const int32x4_t initial = vdupq_n_s32( 1 << (exp - 1) );
     	const int32x4_t voffset = vdupq_n_s32( offset );
@@ -53,8 +53,8 @@ convi_uchar_simd( VipsPel *pout, VipsPel *pin,
 		for( ; i <= n - 2; i += 2 ) {
 			/* Load two coeffs
 			 */
-			vc = vreinterpret_s16_s32(
-				vdup_n_s32( *(int32_t *) &mant[i] ) );
+			memcpy(&mant32, &mant[i], sizeof(int32_t));
+			vc = vreinterpret_s16_s32( vdup_n_s32( mant32 ) );
 
 			line1 = vld1q_u8( p + offsets[i] );
 			line2 = vld1q_u8( p + offsets[i + 1] );
@@ -135,8 +135,8 @@ convi_uchar_simd( VipsPel *pout, VipsPel *pin,
 		for( ; i <= n - 2; i += 2 ) {
 			/* Load two coeffs
 			 */
-			vc = vreinterpret_s16_s32(
-				vdup_n_s32( *(int32_t *) &mant[i] ) );
+			memcpy(&mant32, &mant[i], sizeof(int32_t));
+			vc = vreinterpret_s16_s32( vdup_n_s32( mant32 ) );
 
 			line1 = vld1_u8( p + offsets[i] );
 			line2 = vld1_u8( p + offsets[i + 1] );
@@ -193,8 +193,8 @@ convi_uchar_simd( VipsPel *pout, VipsPel *pin,
 		for( ; i <= n - 2; i += 2 ) {
 			/* Load two coeffs
 			 */
-			vc = vreinterpret_s16_s32(
-				vdup_n_s32( *(int32_t *) &mant[i] ) );
+			memcpy(&mant32, &mant[i], sizeof(int32_t));
+			vc = vreinterpret_s16_s32( vdup_n_s32( mant32 ) );
 
 			line1 = vreinterpret_u8_u32( vdup_n_u32(
 				*(uint32_t*) (p + offsets[i]) ) );
@@ -242,8 +242,8 @@ convi_uchar_simd( VipsPel *pout, VipsPel *pin,
 		for( ; i <= n - 2; i += 2 ) {
 			/* Load two coeffs
 			 */
-			vc = vreinterpret_s16_s32(
-				vdup_n_s32( *(int32_t *) &mant[i] ) );
+			memcpy(&mant32, &mant[i], sizeof(int32_t));
+			vc = vreinterpret_s16_s32( vdup_n_s32( mant32 ) );
 
 			line1 = vdup_n_s16( p[offsets[i]] );
 			line2 = vdup_n_s16( p[offsets[i + 1]] );

@@ -18,7 +18,7 @@ void
 reduceh_uchar_simd_4bands( VipsPel *pout, VipsPel *pin, int32_t n_point,
 	int32_t width, int16_t * restrict c, int32_t * restrict bounds )
 {
-	int32_t x, i;
+	int32_t x, i, c32, p32;
 
 	const __m128i initial = _mm_set1_epi32( VIPS_INTERPOLATE_SCALE >> 1 );
 
@@ -52,8 +52,10 @@ reduceh_uchar_simd_4bands( VipsPel *pout, VipsPel *pin, int32_t n_point,
 		for( ; i <= n - 4; i += 4 ) {
 			/* Load four coeffs
 			 */
-			vc_lo = _mm_set1_epi32( *(int32_t *) &c[i] );
-			vc_hi = _mm_set1_epi32( *(int32_t *) &c[i + 2] );
+			memcpy(&c32, &c[i], sizeof(int32_t));
+			vc_lo = _mm_set1_epi32( c32 );
+			memcpy(&c32, &c[i + 2], sizeof(int32_t));
+			vc_hi = _mm_set1_epi32( c32 );
 
 			line = _mm_loadu_si128( (__m128i *) p );
 			p += 16;
@@ -70,7 +72,8 @@ reduceh_uchar_simd_4bands( VipsPel *pout, VipsPel *pin, int32_t n_point,
 		for( ; i <= n - 2; i += 2 ) {
 			/* Load two coeffs
 			 */
-			vc_lo = _mm_set1_epi32( *(int32_t *) &c[i] );
+			memcpy(&c32, &c[i], sizeof(int32_t));
+			vc_lo = _mm_set1_epi32( c32 );
 
 			line = _mm_loadu_si64( p );
 			p += 8;
@@ -83,7 +86,8 @@ reduceh_uchar_simd_4bands( VipsPel *pout, VipsPel *pin, int32_t n_point,
 		for( ; i < n; i++ ) {
 			vc_lo = _mm_set1_epi16( c[i] );
 
-			line = _mm_set1_epi32( *(uint32_t *) p );
+			memcpy(&p32, p, sizeof(int32_t));
+			line = _mm_cvtsi32_si128( p32 );
 			p += 4;
 
 			pix = _mm_shuffle_epi8( line, tbl4 );
@@ -106,7 +110,7 @@ void
 reduceh_uchar_simd_3bands( VipsPel *pout, VipsPel *pin, int32_t n_point,
 	int32_t width, int16_t * restrict c, int32_t * restrict bounds )
 {
-	int32_t x, i;
+	int32_t x, i, c32, p32;
 
 	const __m128i initial = _mm_set1_epi32( VIPS_INTERPOLATE_SCALE >> 1 );
 
@@ -147,8 +151,10 @@ reduceh_uchar_simd_3bands( VipsPel *pout, VipsPel *pin, int32_t n_point,
 		for( ; i <= n - 4; i += 4 ) {
 			/* Load four coeffs
 			 */
-			vc_lo = _mm_set1_epi32( *(int32_t *) &c[i] );
-			vc_hi = _mm_set1_epi32( *(int32_t *) &c[i + 2] );
+			memcpy(&c32, &c[i], sizeof(int32_t));
+			vc_lo = _mm_set1_epi32( c32 );
+			memcpy(&c32, &c[i + 2], sizeof(int32_t));
+			vc_hi = _mm_set1_epi32( c32 );
 
 			line = _mm_loadu_si128( (__m128i *) p );
 			p += 12;
@@ -165,7 +171,8 @@ reduceh_uchar_simd_3bands( VipsPel *pout, VipsPel *pin, int32_t n_point,
 		for( ; i <= n - 2; i += 2 ) {
 			/* Load two coeffs
 			 */
-			vc_lo = _mm_set1_epi32( *(int32_t *) &c[i] );
+			memcpy(&c32, &c[i], sizeof(int32_t));
+			vc_lo = _mm_set1_epi32( c32 );
 
 			line = _mm_loadu_si64( p );
 			p += 6;
@@ -178,7 +185,8 @@ reduceh_uchar_simd_3bands( VipsPel *pout, VipsPel *pin, int32_t n_point,
 		for( ; i < n; i++ ) {
 			vc_lo = _mm_set1_epi16( c[i] );
 
-			line = _mm_set1_epi32( *(uint32_t *) p );
+			memcpy(&p32, p, sizeof(int32_t));
+			line = _mm_cvtsi32_si128( p32 );
 			p += 3;
 
 			pix = _mm_shuffle_epi8( line, tbl4 );

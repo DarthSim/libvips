@@ -19,7 +19,7 @@ convi_uchar_simd( VipsPel *pout, VipsPel *pin,
 	int32_t n, int32_t ne, int32_t offset, int32_t * restrict offsets,
 	int16_t * restrict mant, int32_t exp )
 {
-	int32_t x, i;
+	int32_t x, i, mant32;
 	__m128i source, line1, line2, pix, vc;
 
     	const __m128i initial = _mm_set1_epi32( 1 << (exp - 1) );
@@ -42,7 +42,8 @@ convi_uchar_simd( VipsPel *pout, VipsPel *pin,
 		for( ; i <= n - 2; i += 2 ) {
 			/* Load two coeffs
 			 */
-			vc = _mm_set1_epi32( *(int32_t *) &mant[i] );
+			memcpy(&mant32, &mant[i], sizeof(int32_t));
+			vc = _mm_set1_epi32( mant32 );
 
 			line1 = _mm_loadu_si128( (__m128i *) (p + offsets[i]) );
 			line2 = _mm_loadu_si128(
@@ -108,7 +109,8 @@ convi_uchar_simd( VipsPel *pout, VipsPel *pin,
 		for( ; i <= n - 2; i += 2 ) {
 			/* Load two coeffs
 			 */
-			vc = _mm_set1_epi32( *(int32_t *) &mant[i] );
+			memcpy(&mant32, &mant[i], sizeof(int32_t));
+			vc = _mm_set1_epi32( mant32 );
 
 			line1 = _mm_loadu_si64( p + offsets[i] );
 			line2 = _mm_loadu_si64( p + offsets[i + 1] );
@@ -154,12 +156,13 @@ convi_uchar_simd( VipsPel *pout, VipsPel *pin,
 		for( ; i <= n - 2; i += 2 ) {
 			/* Load two coeffs
 			 */
-			vc = _mm_set1_epi32( *(int32_t *) &mant[i] );
+			memcpy(&mant32, &mant[i], sizeof(int32_t));
+			vc = _mm_set1_epi32( mant32 );
 
-			line1 = _mm_set1_epi32(
+			line1 = _mm_cvtsi32_si128(
 				*(int32_t *) (p + offsets[i]) );
 
-			line2 = _mm_set1_epi32(
+			line2 = _mm_cvtsi32_si128(
 				*(int32_t *) (p  + offsets[i + 1]) );
 
 			pix = _mm_unpacklo_epi8(
@@ -170,7 +173,8 @@ convi_uchar_simd( VipsPel *pout, VipsPel *pin,
 		for( ; i < n; i++ ) {
 			vc = _mm_set1_epi16( mant[i] );
 
-			line1 = _mm_set1_epi32( *(int32_t *) (p + offsets[i]) );
+			line1 = _mm_cvtsi32_si128(
+				*(int32_t *) (p + offsets[i]) );
 
 			pix = _mm_unpacklo_epi8(
 				_mm_unpacklo_epi8( line1, zero ), zero );
@@ -197,7 +201,8 @@ convi_uchar_simd( VipsPel *pout, VipsPel *pin,
 		for( ; i <= n - 2; i += 2 ) {
 			/* Load two coeffs
 			 */
-			vc = _mm_set1_epi32( *(int32_t *) &mant[i] );
+			memcpy(&mant32, &mant[i], sizeof(int32_t));
+			vc = _mm_set1_epi32( mant32 );
 
 			line1 = _mm_set1_epi16( p[offsets[i]] );
 			line2 = _mm_set1_epi16( p[offsets[i + 1]] );

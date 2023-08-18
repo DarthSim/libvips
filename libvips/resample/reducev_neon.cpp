@@ -25,7 +25,8 @@ void
 reducev_uchar_simd( VipsPel *pout, VipsPel *pin,
 	int32_t n, int32_t ne, int32_t lskip, const int16_t * restrict c )
 {
-	int32_t x, i;
+	int32_t x, i, c32;
+	uint32_t p32;
 
 	const int32x4_t initial = vdupq_n_s32( VIPS_INTERPOLATE_SCALE >> 1 );
 	const uint8x8_t zero_uint8x8 = vdup_n_u8( 0 );
@@ -51,8 +52,8 @@ reducev_uchar_simd( VipsPel *pout, VipsPel *pin,
 		for( ; i <= n - 2; i += 2 ) {
 			/* Load two coeffs
 			 */
-			vc = vreinterpret_s16_s32(
-				vdup_n_s32( *(int32_t *) &c[i] ) );
+			memcpy(&c32, &c[i], sizeof(int32_t));
+			vc = vreinterpret_s16_s32( vdup_n_s32( c32 ) );
 
 			line1 = vld1q_u8( p );
 			p += lskip;
@@ -132,8 +133,8 @@ reducev_uchar_simd( VipsPel *pout, VipsPel *pin,
 		for( ; i <= n - 2; i += 2 ) {
 			/* Load two coeffs
 			 */
-			vc = vreinterpret_s16_s32(
-				vdup_n_s32( *(int32_t *) &c[i] ) );
+			memcpy(&c32, &c[i], sizeof(int32_t));
+			vc = vreinterpret_s16_s32( vdup_n_s32( c32 ) );
 
 			line1 = vld1_u8( p );
 			p += lskip;
@@ -191,15 +192,15 @@ reducev_uchar_simd( VipsPel *pout, VipsPel *pin,
 		for( ; i <= n - 2; i += 2 ) {
 			/* Load two coeffs
 			 */
-			vc = vreinterpret_s16_s32(
-				vdup_n_s32( *(int32_t *) &c[i] ) );
+			memcpy(&c32, &c[i], sizeof(int32_t));
+			vc = vreinterpret_s16_s32( vdup_n_s32( c32 ) );
 
-			line1 = vreinterpret_u8_u32(
-				vdup_n_u32( *(uint32_t*) p ) );
+			memcpy(&p32, p, sizeof(uint32_t));
+			line1 = vreinterpret_u8_u32( vdup_n_u32( p32 ) );
 			p += lskip;
 
-			line2 = vreinterpret_u8_u32(
-				vdup_n_u32( *(uint32_t*) p ) );
+			memcpy(&p32, p, sizeof(uint32_t));
+			line2 = vreinterpret_u8_u32( vdup_n_u32( p32 ) );
 			p += lskip;
 
 			pix = vreinterpretq_s16_u16(
@@ -210,8 +211,8 @@ reducev_uchar_simd( VipsPel *pout, VipsPel *pin,
 		for( ; i < n; i++ ) {
 			vc = vdup_n_s16( c[i] );
 
-			line1 = vreinterpret_u8_u32(
-				vdup_n_u32( *(uint32_t*) p ) );
+			memcpy(&p32, p, sizeof(uint32_t));
+			line1 = vreinterpret_u8_u32( vdup_n_u32( p32 ) );
 			p += lskip;
 
 			pix = vreinterpretq_s16_u16(
@@ -241,8 +242,8 @@ reducev_uchar_simd( VipsPel *pout, VipsPel *pin,
 		for( ; i <= n - 2; i += 2 ) {
 			/* Load two coeffs
 			 */
-			vc = vreinterpret_s16_s32(
-				vdup_n_s32( *(int32_t *) &c[i] ) );
+			memcpy(&c32, &c[i], sizeof(int32_t));
+			vc = vreinterpret_s16_s32( vdup_n_s32( c32 ) );
 
 			line1 = vdup_n_s16( *p );
 			p += lskip;

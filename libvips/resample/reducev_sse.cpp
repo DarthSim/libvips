@@ -18,7 +18,7 @@ void
 reducev_uchar_simd( VipsPel *pout, VipsPel *pin,
 	int32_t n, int32_t ne, int32_t lskip, const int16_t * restrict c )
 {
-	int32_t x, i;
+	int32_t x, i, c32, p32;
 	__m128i source, line1, line2, pix, vc;
 
 	const __m128i initial = _mm_set1_epi32( VIPS_INTERPOLATE_SCALE >> 1 );
@@ -40,7 +40,8 @@ reducev_uchar_simd( VipsPel *pout, VipsPel *pin,
 		for( ; i <= n - 2; i += 2 ) {
 			/* Load two coeffs
 			 */
-			vc = _mm_set1_epi32( *(int32_t *) &c[i] );
+			memcpy(&c32, &c[i], sizeof(int32_t));
+			vc = _mm_set1_epi32( c32 );
 
 			line1 = _mm_loadu_si128( (__m128i *) p );
 			p += lskip;
@@ -104,7 +105,8 @@ reducev_uchar_simd( VipsPel *pout, VipsPel *pin,
 		for( ; i <= n - 2; i += 2 ) {
 			/* Load two coeffs
 			 */
-			vc = _mm_set1_epi32( *(int32_t *) &c[i] );
+			memcpy(&c32, &c[i], sizeof(int32_t));
+			vc = _mm_set1_epi32( c32 );
 
 			line1 = _mm_loadu_si64( p );
 			p += lskip;
@@ -151,12 +153,15 @@ reducev_uchar_simd( VipsPel *pout, VipsPel *pin,
 		for( ; i <= n - 2; i += 2 ) {
 			/* Load two coeffs
 			 */
-			vc = _mm_set1_epi32( *(int32_t *) &c[i] );
+			memcpy(&c32, &c[i], sizeof(int32_t));
+			vc = _mm_set1_epi32( c32 );
 
-			line1 = _mm_set1_epi32( *(int32_t *) p );
+			memcpy(&p32, p, sizeof(int32_t));
+			line1 = _mm_cvtsi32_si128( p32 );
 			p += lskip;
 
-			line2 = _mm_set1_epi32( *(int32_t *) p );
+			memcpy(&p32, p, sizeof(int32_t));
+			line2 = _mm_cvtsi32_si128( p32 );
 			p += lskip;
 
 			pix = _mm_unpacklo_epi8(
@@ -167,8 +172,8 @@ reducev_uchar_simd( VipsPel *pout, VipsPel *pin,
 		for( ; i < n; i++ ) {
 			vc = _mm_set1_epi16( c[i] );
 
-			line1 = _mm_set1_epi32( *(int32_t *) p );
-			p += lskip;
+			memcpy(&p32, p, sizeof(int32_t));
+			line1 = _mm_cvtsi32_si128( p32 );
 
 			pix = _mm_unpacklo_epi8(
 				_mm_unpacklo_epi8( line1, zero ), zero );
@@ -193,7 +198,8 @@ reducev_uchar_simd( VipsPel *pout, VipsPel *pin,
 		for( ; i <= n - 2; i += 2 ) {
 			/* Load two coeffs
 			 */
-			vc = _mm_set1_epi32( *(int32_t *) &c[i] );
+			memcpy(&c32, &c[i], sizeof(int32_t));
+			vc = _mm_set1_epi32( c32 );
 
 			line1 = _mm_set1_epi16( *p );
 			p += lskip;
