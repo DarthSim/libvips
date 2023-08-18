@@ -42,7 +42,7 @@ option('vapi',
 
 option('simd', 
   type: 'boolean', 
-  value: false, 
+  value: true, 
   description: 'Use SIMD (SSE/NEON) intrinsics')
 
 # External libraries
