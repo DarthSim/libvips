@@ -357,6 +357,11 @@ typedef struct _RtiffHeader {
 	 */
 	gboolean we_decompress;
 
+	/* TRUE if we use TIFFRGBAImage or TIFFReadRGBATile.
+	 * Used for COMPRESSION_OJPEG
+	 */
+	gboolean read_as_rgba;
+
 } RtiffHeader;
 
 /* Scanline-type process function.
@@ -688,6 +693,45 @@ rtiff_strip_read( Rtiff *rtiff, int strip, tdata_t buf )
 	return( 0 );
 }
 
+static int
+rtiff_rgba_strip_read(Rtiff *rtiff, int strip, tdata_t buf)
+{
+	RtiffHeader *header = &rtiff->header;
+
+	TIFFRGBAImage img;
+	guint32 rows_to_read;
+	char err[1024] = "";
+
+#ifdef DEBUG_VERBOSE
+	printf("rtiff_rgba_strip_read: reading strip %d\n", strip);
+#endif /*DEBUG_VERBOSE*/
+
+	if (!TIFFRGBAImageOK(rtiff->tiff, err) ||
+		!TIFFRGBAImageBegin(&img, rtiff->tiff, 0, err)) {
+		vips_foreign_load_invalidate(rtiff->out);
+		vips_error("tiff2vips", "%s", err);
+		return -1;
+	}
+
+	img.req_orientation = header->orientation;
+	img.row_offset = strip * header->rows_per_strip;
+	img.col_offset = 0;
+
+	rows_to_read =
+		VIPS_MIN(header->rows_per_strip, header->height - img.row_offset);
+
+	if (!TIFFRGBAImageGet(&img, buf, header->width, rows_to_read)) {
+		TIFFRGBAImageEnd(&img);
+		vips_foreign_load_invalidate(rtiff->out);
+		vips_error("tiff2vips", "%s", _("read error"));
+		return -1;
+	}
+
+	TIFFRGBAImageEnd(&img);
+
+	return 0;
+}
+
 /* We need to hint to libtiff what format we'd like pixels in.
  */
 static void
@@ -695,9 +739,10 @@ rtiff_set_decode_format( Rtiff *rtiff )
 {
 	/* Ask for YCbCr->RGB for jpg data.
 	 */
-	if( rtiff->header.compression == COMPRESSION_JPEG )
-		TIFFSetField( rtiff->tiff, 
-			TIFFTAG_JPEGCOLORMODE, JPEGCOLORMODE_RGB );
+	if (rtiff->header.compression == COMPRESSION_JPEG ||
+		rtiff->header.compression == COMPRESSION_OJPEG)
+		TIFFSetField(rtiff->tiff,
+			TIFFTAG_JPEGCOLORMODE, JPEGCOLORMODE_RGB);
 
 	/* Ask for SGI LOGLUV as 3xfloat.
 	 */
@@ -1690,7 +1735,27 @@ rtiff_parse_copy( Rtiff *rtiff, VipsImage *out )
 	return 0;
 }
 
-typedef int (*reader_fn)( Rtiff *rtiff, VipsImage *out );
+/* Read an image as RGBA using TIFFRGBAImage
+ */
+static int
+rtiff_parse_rgba(Rtiff *rtiff, VipsImage *out)
+{
+	out->Bands = 4;
+	out->Type = VIPS_INTERPRETATION_sRGB;
+	out->BandFmt = VIPS_FORMAT_UCHAR;
+	out->Coding = VIPS_CODING_NONE;
+
+	rtiff->client = out;
+
+	/* We'll have RGBA areas of exact size as we need, so we can just copy it
+	 */
+	rtiff->sfn = rtiff_memcpy_line;
+	rtiff->memcpy = TRUE;
+
+	return 0;
+}
+
+typedef int (*reader_fn)(Rtiff *rtiff, VipsImage *out);
 
 /* We have a range of output paths. Look at the tiff header and try to
  * route the input image to the best output path.
@@ -1702,6 +1767,10 @@ rtiff_pick_reader( Rtiff *rtiff )
 	int photometric_interpretation = 
 		rtiff->header.photometric_interpretation;
 	int samples_per_pixel = rtiff->header.samples_per_pixel;
+	int read_as_rgba = rtiff->header.read_as_rgba;
+
+	if (read_as_rgba)
+		return rtiff_parse_rgba;
 
 	if( photometric_interpretation == PHOTOMETRIC_CIELAB ) {
 		if( bits_per_sample == 8 ) {
@@ -2148,6 +2217,41 @@ rtiff_decompress_tile( Rtiff *rtiff, tdata_t *in, tsize_t size, tdata_t *out )
         return( 0 );
 }
 
+/* Decompress a tile to RGBA
+ */
+static int
+rtiff_read_rgba_tile(Rtiff *rtiff, int x, int y, tdata_t *buf)
+{
+	guint32 *u32_buf = (guint32 *) buf;
+
+	if (!TIFFReadRGBATile(rtiff->tiff, x, y, u32_buf))
+		return -1;
+
+	/* For some reasons, TIFFReadRGBATile decodes tiles upside down,
+	 * so we need to flip them
+	 */
+	guint32 tile_width = rtiff->header.tile_width;
+	guint32 tile_height = rtiff->header.tile_height;
+
+	int xx, yy;
+	guint32 t;
+	guint32 *up = u32_buf;
+	guint32 *down = u32_buf + (tile_height - 1) * tile_width;
+
+	for (yy = 0; yy < tile_height / 2; yy++) {
+		for (xx = 0; xx < tile_width; xx++) {
+			t = up[xx];
+			up[xx] = down[xx];
+			down[xx] = t;
+		}
+
+		up += tile_width;
+		down -= tile_width;
+	}
+
+	return 0;
+}
+
 /* Select a page and decompress a tile. This has to be a single operation,
  * since it changes the current page number in TIFF.
  */
@@ -2188,33 +2292,40 @@ rtiff_read_tile( RtiffSeq *seq, tdata_t *buf, int page, int x, int y )
 
                 g_rec_mutex_unlock( &rtiff->lock );
 
-                /* Decompress outside the lock, so we get parallelism.
-                 */
-                if( rtiff_decompress_tile( rtiff, 
-                        seq->compressed_buf, size, buf ) ) {
-                        vips_error( "tiff2vips", 
-                                _( "decompress error tile %d x %d" ), x, y ); 
-                        return( -1 );
-                }
-        }
-        else {
-                g_rec_mutex_lock( &rtiff->lock );
+		/* Decompress outside the lock, so we get parallelism.
+		 */
+		if (rtiff_decompress_tile(rtiff,
+				seq->compressed_buf, size, buf)) {
+			vips_error("tiff2vips",
+				_("decompress error tile %d x %d"), x, y);
+			return -1;
+		}
+	}
+	else {
+		g_rec_mutex_lock(&rtiff->lock);
 
-                if( rtiff_set_page( rtiff, page ) ) {
-                        g_rec_mutex_unlock( &rtiff->lock );
-                        return( -1 );
-                }
-
-                if( TIFFReadTile( rtiff->tiff, buf, x, y, 0, 0 ) < 0 ) { 
-			vips_foreign_load_invalidate( rtiff->out );
-                        g_rec_mutex_unlock( &rtiff->lock );
-			return( -1 ); 
+		if (rtiff_set_page(rtiff, page)) {
+			g_rec_mutex_unlock(&rtiff->lock);
+			return -1;
 		}
 
-                g_rec_mutex_unlock( &rtiff->lock );
-        }
+		if (rtiff->header.read_as_rgba) {
+			if (rtiff_read_rgba_tile(rtiff, x, y, buf)) {
+				vips_foreign_load_invalidate(rtiff->out);
+				g_rec_mutex_unlock(&rtiff->lock);
+				return -1;
+			}
+		}
+		else if (TIFFReadTile(rtiff->tiff, buf, x, y, 0, 0) < 0) {
+			vips_foreign_load_invalidate(rtiff->out);
+			g_rec_mutex_unlock(&rtiff->lock);
+			return -1;
+		}
 
-	return( 0 ); 
+		g_rec_mutex_unlock(&rtiff->lock);
+	}
+
+	return 0;
 }
 
 /* Paint a tile from the file. This is a
@@ -2538,12 +2649,17 @@ rtiff_strip_read_interleaved( Rtiff *rtiff,
 	int samples_per_pixel = rtiff->header.samples_per_pixel;
 	int read_height = rtiff->header.read_height;
 	int bits_per_sample = rtiff->header.bits_per_sample;
+	int read_as_rgba = rtiff->header.read_as_rgba;
 	int strip_y = strip * read_height;
 
         if( rtiff_set_page( rtiff, page ) ) 
                 return( -1 );
 
-	if( rtiff->header.separate ) {
+	if (read_as_rgba) {
+		if (rtiff_rgba_strip_read(rtiff, strip, buf))
+			return -1;
+	}
+	else if (rtiff->header.separate) {
 		int page_width = rtiff->header.width;
 		int page_height = rtiff->header.height;
 		int strips_per_plane = 1 + (page_height - 1) / read_height;
@@ -2854,6 +2970,7 @@ rtiff_header_read( Rtiff *rtiff, RtiffHeader *header )
 	toff_t *subifd_offsets;
 	char *image_description;
 	guint32 max_tile_dimension;
+	gboolean can_read_as_rgba;
 
 	if( !tfget32( rtiff->tiff, TIFFTAG_IMAGEWIDTH, 
 			&header->width ) ||
@@ -2869,8 +2986,30 @@ rtiff_header_read( Rtiff *rtiff, RtiffHeader *header )
 			&header->inkset ) )
 		return( -1 );
 
-	TIFFGetFieldDefaulted( rtiff->tiff, 
-		TIFFTAG_COMPRESSION, &header->compression );
+	header->read_as_rgba = FALSE;
+
+	can_read_as_rgba =
+		(header->samples_per_pixel == 1 ||
+			header->samples_per_pixel == 3 ||
+			header->samples_per_pixel == 4) &&
+		(header->bits_per_sample == 1 ||
+			header->bits_per_sample == 2 ||
+			header->bits_per_sample == 4 ||
+			header->bits_per_sample == 8 ||
+			header->bits_per_sample == 16);
+
+	TIFFGetFieldDefaulted(rtiff->tiff,
+		TIFFTAG_COMPRESSION, &header->compression);
+
+	/* We'll decode old-style JPEG using TIFFRGBAImage or TIFFReadRGBATile
+	 */
+	if (header->compression == COMPRESSION_OJPEG) {
+		if (!(header->read_as_rgba = can_read_as_rgba)) {
+			vips_error("tiff2vips",
+				"%s", _("unsupported tiff image type"));
+			return -1;
+		}
+	}
 
 	/* One of the types we decompress?
 	 */
@@ -2893,8 +3032,9 @@ rtiff_header_read( Rtiff *rtiff, RtiffHeader *header )
 	 * non-jpg images. We must set this here since it changes the result
 	 * of scanline_size.
 	 */
-	if( header->compression != COMPRESSION_JPEG &&
-		header->photometric_interpretation == PHOTOMETRIC_YCBCR ) {
+	if (!header->read_as_rgba &&
+		header->compression != COMPRESSION_JPEG &&
+		header->photometric_interpretation == PHOTOMETRIC_YCBCR) {
 		/* We rely on the jpg decompressor to upsample chroma
 		 * subsampled images. If there is chroma subsampling but
 		 * no jpg compression, we have to give up.
@@ -2903,15 +3043,16 @@ rtiff_header_read( Rtiff *rtiff, RtiffHeader *header )
 		 */
                 guint16 hsub, vsub;
 
-                TIFFGetFieldDefaulted( rtiff->tiff, 
-			TIFFTAG_YCBCRSUBSAMPLING, &hsub, &vsub );
-                if( hsub != 1 || 
-			vsub != 1 ) {
-			vips_error( "tiff2vips",
-				"%s", _( "subsampled images not supported" ) );
-			return( -1 );
-                }
-        }
+		TIFFGetFieldDefaulted(rtiff->tiff,
+			TIFFTAG_YCBCRSUBSAMPLING, &hsub, &vsub);
+		if (hsub != 1 || vsub != 1) {
+			if (!(header->read_as_rgba = can_read_as_rgba)) {
+				vips_error("tiff2vips",
+					"%s", _("subsampled images not supported"));
+				return -1;
+			}
+		}
+	}
 
 	if( header->photometric_interpretation == PHOTOMETRIC_LOGLUV ) {
 		if( header->compression != COMPRESSION_SGILOG &&
@@ -2980,21 +3121,32 @@ rtiff_header_read( Rtiff *rtiff, RtiffHeader *header )
 	 */
 	header->tiled = TIFFIsTiled( rtiff->tiff );
 
+	if (header->read_as_rgba) {
+		header->we_decompress = FALSE;
+		header->photometric_interpretation = PHOTOMETRIC_RGB;
+		header->samples_per_pixel = 4;
+		header->bits_per_sample = 8;
+		header->sample_format = SAMPLEFORMAT_UINT;
+		header->separate = FALSE;
+	}
+
 #ifdef DEBUG
-	printf( "rtiff_header_read: header.width = %d\n", 
-		header->width );
-	printf( "rtiff_header_read: header.height = %d\n", 
-		header->height );
-	printf( "rtiff_header_read: header.samples_per_pixel = %d\n", 
-		header->samples_per_pixel );
-	printf( "rtiff_header_read: header.bits_per_sample = %d\n", 
-		header->bits_per_sample );
-	printf( "rtiff_header_read: header.sample_format = %d\n", 
-		header->sample_format );
-	printf( "rtiff_header_read: header.orientation = %d\n", 
-		header->orientation );
-	printf( "rtiff_header_read: header.tiled = %d\n", 
-		header->tiled );
+	printf("rtiff_header_read: header.read_as_rgba = %d\n",
+		header->read_as_rgba);
+	printf("rtiff_header_read: header.width = %d\n",
+		header->width);
+	printf("rtiff_header_read: header.height = %d\n",
+		header->height);
+	printf("rtiff_header_read: header.samples_per_pixel = %d\n",
+		header->samples_per_pixel);
+	printf("rtiff_header_read: header.bits_per_sample = %d\n",
+		header->bits_per_sample);
+	printf("rtiff_header_read: header.sample_format = %d\n",
+		header->sample_format);
+	printf("rtiff_header_read: header.orientation = %d\n",
+		header->orientation);
+	printf("rtiff_header_read: header.tiled = %d\n",
+		header->tiled);
 #endif /*DEBUG*/
 
 	if( header->tiled ) {
@@ -3026,8 +3178,14 @@ rtiff_header_read( Rtiff *rtiff, RtiffHeader *header )
 			return( -1 );
 		}
 
-		header->tile_size = TIFFTileSize( rtiff->tiff );
-		header->tile_row_size = TIFFTileRowSize( rtiff->tiff );
+		if (header->read_as_rgba) {
+			header->tile_row_size = header->tile_width * 4;
+			header->tile_size = header->tile_row_size * header->tile_height;
+		}
+		else {
+			header->tile_size = TIFFTileSize(rtiff->tiff);
+			header->tile_row_size = TIFFTileRowSize(rtiff->tiff);
+		}
 
 #ifdef DEBUG
 		printf( "rtiff_header_read: header.tile_size = %zd\n", 
@@ -3057,12 +3215,29 @@ rtiff_header_read( Rtiff *rtiff, RtiffHeader *header )
 		header->read_size = 0;
 	}
 	else {
-		if( !tfget32( rtiff->tiff, 
-			TIFFTAG_ROWSPERSTRIP, &header->rows_per_strip ) )
-			return( -1 );
-		header->strip_size = TIFFStripSize( rtiff->tiff );
-		header->scanline_size = TIFFScanlineSize( rtiff->tiff );
-		header->number_of_strips = TIFFNumberOfStrips( rtiff->tiff );
+		if (!tfget32(rtiff->tiff,
+				TIFFTAG_ROWSPERSTRIP, &header->rows_per_strip))
+			return -1;
+
+		/* rows_per_strip can be 2 ** 32 - 1, meaning the
+		 * whole image. Clip this down to height to avoid
+		 * confusing vips.
+		 *
+		 * And it mustn't be zero.
+		 */
+		header->rows_per_strip = VIPS_CLIP(1,
+			header->rows_per_strip, header->height);
+
+		header->number_of_strips = TIFFNumberOfStrips(rtiff->tiff);
+
+		if (header->read_as_rgba) {
+			header->scanline_size = header->width * 4;
+			header->strip_size = header->scanline_size * header->rows_per_strip;
+		}
+		else {
+			header->scanline_size = TIFFScanlineSize(rtiff->tiff);
+			header->strip_size = TIFFStripSize(rtiff->tiff);
+		}
 
 #ifdef DEBUG
 		printf( "rtiff_header_read: header.rows_per_strip = %d\n", 
@@ -3090,26 +3265,21 @@ rtiff_header_read( Rtiff *rtiff, RtiffHeader *header )
 		 * Don't try scanline reading for YCbCr images.
 		 * TIFFScanlineSize() will not work in this case due to
 		 * chroma subsampling.
+		 *
+		 * Don't use scanline reading if we're going to use TIFFRGBAImage
 		 */
 		if( header->rows_per_strip > 128 &&
 			!header->separate &&
-			header->photometric_interpretation != 
-				PHOTOMETRIC_YCBCR ) {
+			header->photometric_interpretation !=
+				PHOTOMETRIC_YCBCR &&
+			!header->read_as_rgba) {
 			header->read_scanlinewise = TRUE;
 			header->read_height = 1;
 			header->read_size = rtiff->header.scanline_size;
 		}
 		else {
 			header->read_scanlinewise = FALSE;
-
-			/* rows_per_strip can be 2 ** 32 - 1, meaning the 
-			 * whole image. Clip this down to height to avoid 
-			 * confusing vips. 
-			 *
-			 * And it musn't be zero.
-			 */
-			header->read_height = VIPS_CLIP( 1, 
-				header->rows_per_strip, header->height );
+			header->read_height = header->rows_per_strip;
 			header->read_size = header->strip_size;
 		}
 
