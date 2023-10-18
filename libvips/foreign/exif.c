@@ -295,7 +295,10 @@ vips_exif_to_s( ExifData *ed, ExifEntry *entry, VipsBuf *buf )
 	int iv;
 	ExifRational rv;
 	ExifSRational srv;
-	char txt[256];
+	char txt[256], *value;
+
+	value = g_utf8_make_valid(
+		exif_entry_get_value(entry, txt, 256), -1);
 
 	if( entry->format == EXIF_FORMAT_ASCII )  {
 		/* libexif does not null-terminate strings. Copy out and add
@@ -305,7 +308,10 @@ vips_exif_to_s( ExifData *ed, ExifEntry *entry, VipsBuf *buf )
 
 		memcpy( txt, entry->data, len );
 		txt[len] = '\0';
-		vips_buf_appendf( buf, "%s ", txt );
+
+		char *utf8 = g_utf8_make_valid(txt, -1);
+		vips_buf_appendf(buf, "%s ", utf8);
+		g_free(utf8);
 	}
 	else if( entry->components < 10 &&
 		!vips_exif_get_int( ed, entry, 0, &iv ) ) {
@@ -330,15 +336,16 @@ vips_exif_to_s( ExifData *ed, ExifEntry *entry, VipsBuf *buf )
 				srv.numerator, srv.denominator );
 		}
 	}
-	else 
-		vips_buf_appendf( buf, "%s ", 
-			exif_entry_get_value( entry, txt, 256 ) );
+	else
+		vips_buf_appendf(buf, "%s ", value);
 
-	vips_buf_appendf( buf, "(%s, %s, %lu components, %d bytes)", 
-		exif_entry_get_value( entry, txt, 256 ),
-		exif_format_get_name( entry->format ),
+	vips_buf_appendf(buf, "(%s, %s, %lu components, %d bytes)",
+		value,
+		exif_format_get_name(entry->format),
 		entry->components,
-		entry->size );
+		entry->size);
+
+	g_free(value);
 }
 
 typedef struct _VipsExifParams {
