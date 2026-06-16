@@ -527,6 +527,13 @@ vips_foreign_save_jxl_set_header(VipsForeignSaveJxl *jxl, VipsImage *in)
 		jxl->info.num_color_channels = VIPS_MIN(3, in->Bands);
 		break;
 
+	case VIPS_INTERPRETATION_CMYK:
+		/* The black channel is an extra channel in libjxl, so we only count the
+		 * CMY channels as color channels
+		 */
+		jxl->info.num_color_channels = VIPS_MIN(3, in->Bands);
+		break;
+
 	default:
 		jxl->info.num_color_channels = in->Bands;
 	}
@@ -577,6 +584,36 @@ vips_foreign_save_jxl_set_header(VipsForeignSaveJxl *jxl, VipsImage *in)
 	if (JxlEncoderSetBasicInfo(jxl->encoder, &jxl->info)) {
 		vips_foreign_save_jxl_error(jxl, "JxlEncoderSetBasicInfo");
 		return -1;
+	}
+
+	/* If the image is CMYK, we need to mark the first extra channel as
+	 * the black channel.
+	 */
+	if (in->Type == VIPS_INTERPRETATION_CMYK) {
+		JxlExtraChannelInfo black;
+		JxlEncoderInitExtraChannelInfo(JXL_CHANNEL_BLACK, &black);
+		black.bits_per_sample = jxl->info.bits_per_sample;
+		black.exponent_bits_per_sample = jxl->info.exponent_bits_per_sample;
+
+		if (JxlEncoderSetExtraChannelInfo(jxl->encoder, 0, &black)) {
+			vips_foreign_save_jxl_error(jxl, "JxlEncoderSetExtraChannelInfo");
+			return -1;
+		}
+
+		/* Explicitly set the alpha channel if we have one
+		 */
+		if (jxl->info.num_extra_channels > 1) {
+			JxlExtraChannelInfo alpha;
+			JxlEncoderInitExtraChannelInfo(JXL_CHANNEL_ALPHA, &alpha);
+			alpha.bits_per_sample = jxl->info.bits_per_sample;
+			alpha.exponent_bits_per_sample = jxl->info.exponent_bits_per_sample;
+
+			if (JxlEncoderSetExtraChannelInfo(jxl->encoder, 1, &alpha))
+			{
+				vips_foreign_save_jxl_error(jxl, "JxlEncoderSetExtraChannelInfo");
+				return -1;
+			}
+		}
 	}
 
 	/* Set any ICC profile.
@@ -946,7 +983,7 @@ vips_foreign_save_jxl_build(VipsObject *object)
 {
 	VipsForeignSave *save = (VipsForeignSave *) object;
 	VipsForeignSaveJxl *jxl = (VipsForeignSaveJxl *) object;
-	VipsImage **t = (VipsImage **) vips_object_local_array(object, 4);
+	VipsImage **t = (VipsImage **) vips_object_local_array(object, 8);
 
 	VipsImage *in;
 	VipsBandFormat format;
@@ -1005,12 +1042,38 @@ vips_foreign_save_jxl_build(VipsObject *object)
 	/* Mimics VIPS_FOREIGN_SAVEABLE_RGB | VIPS_FOREIGN_SAVEABLE_ALPHA.
 	 * FIXME: add support encoding images with > 4 bands.
 	 */
-	if (in->Bands > 4) {
+	int max_bands = in->Type == VIPS_INTERPRETATION_CMYK ? 5 : 4;
+	if (in->Bands > max_bands) {
 		if (vips_extract_band(in, &t[0], 0,
-				"n", 4,
+				"n", max_bands,
 				NULL))
 			return -1;
 		in = t[0];
+	}
+
+	/* We need invert color channels for CMYK
+	 */
+	if (in->Type == VIPS_INTERPRETATION_CMYK) {
+		VipsImage *color = in, *alpha = NULL;
+
+		if (vips_image_hasalpha(in)) {
+			if (vips_extract_band(in, &t[4], 0, "n", 4, NULL) ||
+				vips_extract_band(in, &t[5], 4, NULL))
+				return -1;
+			color = t[4];
+			alpha = t[5];
+		}
+
+		if (vips_invert(color, &t[6], NULL))
+			return -1;
+
+		in = t[6];
+
+		if (alpha) {
+			if (vips_bandjoin2(in, alpha, &t[7], NULL))
+				return -1;
+			in = t[7];
+		}
 	}
 
 	/* The user can set bitdepth to size the number of bits down for int
